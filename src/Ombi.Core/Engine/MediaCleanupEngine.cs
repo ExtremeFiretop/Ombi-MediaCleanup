@@ -197,7 +197,7 @@ namespace Ombi.Core.Engine
                     movieQuery = movieQuery.Where(x => x.TheMovieDbId == mediaId.Value);
                 }
 
-                var movies = await movieQuery.OrderBy(x => x.Title).ToListAsync();
+                var movies = await movieQuery.OrderBy(x => x.Title).ToListAsync(cancellationToken);
                 foreach (var movie in movies)
                 {
                     var cleanup = FindActiveForMedia(
@@ -277,7 +277,7 @@ namespace Ombi.Core.Engine
                     tvQuery = tvQuery.Where(x => x.ExternalProviderId == mediaId.Value || x.TvDbId == mediaId.Value);
                 }
 
-                var tvRequests = await tvQuery.OrderBy(x => x.Title).ToListAsync();
+                var tvRequests = await tvQuery.OrderBy(x => x.Title).ToListAsync(cancellationToken);
                 foreach (var tv in tvRequests)
                 {
                     var cleanup = FindActiveForMedia(
