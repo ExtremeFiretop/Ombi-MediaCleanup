@@ -130,17 +130,18 @@ namespace Ombi.Core.Engine
 
             var permissions = await GetPermissions(user);
             var state = await LoadState();
-            var active = state.Requests
+            var activeRecords = state.Requests
                 .Where(IsActive)
-                .GroupBy(x => new { x.RequestType, x.MediaRequestId })
-                .ToDictionary(x => (x.Key.RequestType, x.Key.MediaRequestId), x => x.OrderByDescending(r => r.CreatedAt).First());
+                .OrderByDescending(x => x.CreatedAt)
+                .ToList();
+            var representedCleanupIds = new HashSet<string>(StringComparer.Ordinal);
 
             // Vote identities are moderation data. Only cleanup managers/admins receive
             // them; normal voters continue to see aggregate totals and their own vote.
             Dictionary<string, string> voterDisplayNames = null;
             if (permissions.CanManage)
             {
-                var voterIds = active.Values
+                var voterIds = activeRecords
                     .SelectMany(x => x.Votes ?? new List<MediaCleanupVoteRecord>())
                     .Select(x => x.UserId)
                     .Where(x => !string.IsNullOrEmpty(x))
@@ -199,7 +200,13 @@ namespace Ombi.Core.Engine
                 var movies = await movieQuery.OrderBy(x => x.Title).ToListAsync();
                 foreach (var movie in movies)
                 {
-                    active.TryGetValue((RequestType.Movie, movie.Id), out var cleanup);
+                    var cleanup = FindActiveForMedia(
+                        activeRecords,
+                        RequestType.Movie,
+                        movie.Id,
+                        movie.TheMovieDbId,
+                        0);
+                    TrackRepresentedCleanup(representedCleanupIds, cleanup);
                     var availableSince = movie.MarkedAsAvailable ?? (movie.RequestedDate == default ? (DateTime?)null : movie.RequestedDate);
                     var owned = movie.RequestedUserId == user.Id;
                     var ageEligible = IsAgeEligible(availableSince, settings.MinimumMediaAgeDays, now);
@@ -273,7 +280,13 @@ namespace Ombi.Core.Engine
                 var tvRequests = await tvQuery.OrderBy(x => x.Title).ToListAsync();
                 foreach (var tv in tvRequests)
                 {
-                    active.TryGetValue((RequestType.TvShow, tv.Id), out var cleanup);
+                    var cleanup = FindActiveForMedia(
+                        activeRecords,
+                        RequestType.TvShow,
+                        tv.Id,
+                        tv.ExternalProviderId,
+                        tv.TvDbId);
+                    TrackRepresentedCleanup(representedCleanupIds, cleanup);
                     var owners = tv.ChildRequests.Select(x => x.RequestedUserId).Where(x => !string.IsNullOrEmpty(x)).Distinct().ToList();
                     var owned = owners.Count == 1 && owners[0] == user.Id;
                     var requestedByCurrentUser = owners.Contains(user.Id);
@@ -393,7 +406,13 @@ namespace Ombi.Core.Engine
 
                 foreach (var record in residualRecords)
                 {
-                    active.TryGetValue((RequestType.TvShow, record.MediaRequestId), out var cleanup);
+                    var cleanup = FindActiveForMedia(
+                        activeRecords,
+                        RequestType.TvShow,
+                        record.MediaRequestId,
+                        record.TheMovieDbId,
+                        record.TvDbId);
+                    TrackRepresentedCleanup(representedCleanupIds, cleanup);
                     var owners = (record.OwnerUserIds ?? new List<string>())
                         .Where(x => !string.IsNullOrEmpty(x))
                         .Distinct()
@@ -454,6 +473,122 @@ namespace Ombi.Core.Engine
                         AvailableSince = record.AvailableSince,
                         SizeOnDisk = tvSizes.TryGetValue(record.TvDbId, out var residualTvSize) ? residualTvSize : 0,
                         Cleanup = ToViewModel(cleanup, user.Id, settings, voterDisplayNames)
+                    });
+                }
+            }
+
+            // Active cleanup workflows must never disappear just because the request-backed
+            // catalog changes underneath them. Vote reminders are generated from the persisted
+            // workflow state, so every active record that was not represented by a currently
+            // eligible request (or a residual TV anchor) is surfaced directly from that state.
+            // This keeps Voting, PendingAdminApproval and ScheduledForDeletion records visible
+            // for their full lifecycle, including when availability/request rows temporarily
+            // change or a request is re-created under a different id.
+            var unrepresentedActive = activeRecords
+                .Where(x => !string.IsNullOrEmpty(x.Id) && !representedCleanupIds.Contains(x.Id))
+                .Where(x => (includeMovies && x.RequestType == RequestType.Movie) ||
+                            (includeTv && x.RequestType == RequestType.TvShow))
+                .Where(x => !requestId.HasValue || x.MediaRequestId == requestId.Value)
+                .Where(x => !mediaId.HasValue ||
+                            (x.RequestType == RequestType.Movie && x.TheMovieDbId == mediaId.Value) ||
+                            (x.RequestType == RequestType.TvShow &&
+                             (x.TheMovieDbId == mediaId.Value || x.TvDbId == mediaId.Value)))
+                .OrderBy(x => x.Title)
+                .ThenByDescending(x => x.CreatedAt)
+                .ToList();
+
+            if (unrepresentedActive.Count > 0)
+            {
+                _logger.LogDebug(
+                    "Media Cleanup is surfacing {Count} active workflow record(s) from persisted state because the request-backed catalog did not represent them.",
+                    unrepresentedActive.Count);
+
+                var fallbackOwnerIds = unrepresentedActive
+                    .SelectMany(x => x.OwnerUserIds ?? new List<string>())
+                    .Where(x => !string.IsNullOrEmpty(x))
+                    .Distinct()
+                    .ToList();
+                var fallbackOwners = fallbackOwnerIds.Count == 0
+                    ? new Dictionary<string, OmbiUser>()
+                    : (await _userManager.Users
+                        .Where(x => fallbackOwnerIds.Contains(x.Id))
+                        .ToListAsync(cancellationToken))
+                        .ToDictionary(x => x.Id);
+
+                foreach (var record in unrepresentedActive)
+                {
+                    var owners = (record.OwnerUserIds ?? new List<string>())
+                        .Where(x => !string.IsNullOrEmpty(x))
+                        .Distinct()
+                        .ToList();
+                    var owned = owners.Count == 1 && owners[0] == user.Id;
+                    if (!CanSeeItem(record, owned, settings, permissions, user.Id))
+                    {
+                        continue;
+                    }
+
+                    var requestedBy = owners
+                        .Where(fallbackOwners.ContainsKey)
+                        .Select(x => GetRequesterDisplayName(fallbackOwners[x], null, permissions.CanManage))
+                        .Where(x => !string.IsNullOrEmpty(x))
+                        .Distinct()
+                        .ToList();
+                    var stewardshipSince = GetCleanupStewardshipSince(
+                        state,
+                        record.RequestType,
+                        record.MediaRequestId,
+                        record.TheMovieDbId,
+                        record.TvDbId,
+                        user.Id);
+                    var ageEligible = IsAgeEligible(record.AvailableSince, settings.MinimumMediaAgeDays, now);
+
+                    if (plexLookup != null)
+                    {
+                        var plexKey = record.RequestType == RequestType.Movie
+                            ? plexLookup.FindMovie(record.TheMovieDbId, null)
+                            : plexLookup.FindSeries(record.TvDbId, record.TheMovieDbId, null);
+                        if (!string.IsNullOrEmpty(plexKey))
+                        {
+                            plexKeys[(record.RequestType, record.MediaRequestId)] = plexKey;
+                        }
+                    }
+
+                    var sizeOnDisk = record.SizeOnDisk;
+                    if (record.RequestType == RequestType.Movie &&
+                        movieSizes.TryGetValue(record.TheMovieDbId, out var fallbackMovieSize))
+                    {
+                        sizeOnDisk = fallbackMovieSize;
+                    }
+                    else if (record.RequestType == RequestType.TvShow &&
+                             tvSizes.TryGetValue(record.TvDbId, out var fallbackTvSize))
+                    {
+                        sizeOnDisk = fallbackTvSize;
+                    }
+
+                    result.Items.Add(new MediaCleanupItemViewModel
+                    {
+                        RequestType = record.RequestType,
+                        RequestId = record.MediaRequestId,
+                        Title = record.Title,
+                        PosterPath = record.PosterPath,
+                        RequestedBy = requestedBy.Count == 1 ? requestedBy[0] : requestedBy.Count > 1 ? "Multiple users" : string.Empty,
+                        OwnedByCurrentUser = owned,
+                        IsCleanupSteward = stewardshipSince.HasValue,
+                        StewardshipSince = stewardshipSince,
+                        // An active workflow already exists, so fallback rows only expose
+                        // actions against that workflow. They must not start a second one.
+                        CanRequestOwnRemoval = false,
+                        CanNominate = false,
+                        CanVote = record.Origin == MediaCleanupOrigin.Community &&
+                                  settings.CommunityCleanup != CommunityCleanupMode.Off &&
+                                  permissions.CanVote &&
+                                  IsVoteable(record),
+                        CanManage = permissions.CanManage,
+                        CanCancel = permissions.CanManage || record.RequestedByUserId == user.Id,
+                        CommunityAgeEligible = ageEligible,
+                        AvailableSince = record.AvailableSince,
+                        SizeOnDisk = sizeOnDisk,
+                        Cleanup = ToViewModel(record, user.Id, settings, voterDisplayNames)
                     });
                 }
             }
@@ -637,7 +772,7 @@ namespace Ombi.Core.Engine
                 }
 
                 var state = await LoadState();
-                if (FindActive(state, requestType, requestId) != null)
+                if (FindActive(state, target) != null)
                 {
                     return Fail("This title already has an active cleanup request.");
                 }
@@ -734,7 +869,7 @@ namespace Ombi.Core.Engine
                     return Fail("Specific TV episode cleanup requires Delete Files to be enabled in Media Cleanup settings. You can still nominate the entire series.");
                 }
 
-                var existing = FindActive(state, requestType, requestId);
+                var existing = FindActive(state, target);
                 if (existing != null)
                 {
                     return Fail("This title already has an active cleanup vote.", existing.Id);
@@ -2380,9 +2515,40 @@ namespace Ombi.Core.Engine
                    (!record.VotingEndsAt.HasValue || record.VotingEndsAt.Value > DateTime.UtcNow);
         }
 
-        private static MediaCleanupRecord FindActive(MediaCleanupState state, RequestType requestType, int requestId)
+        private static MediaCleanupRecord FindActive(MediaCleanupState state, CleanupTarget target)
         {
-            return state.Requests.LastOrDefault(x => x.RequestType == requestType && x.MediaRequestId == requestId && IsActive(x));
+            if (target == null)
+            {
+                return null;
+            }
+
+            return FindActiveForMedia(
+                state?.Requests?.Where(IsActive),
+                target.RequestType,
+                target.RequestId,
+                target.TheMovieDbId,
+                target.TvDbId);
+        }
+
+        private static MediaCleanupRecord FindActiveForMedia(
+            IEnumerable<MediaCleanupRecord> records,
+            RequestType requestType,
+            int requestId,
+            int theMovieDbId,
+            int tvDbId)
+        {
+            return records?
+                .Where(x => x != null && IsSameCleanupMedia(x, requestType, requestId, theMovieDbId, tvDbId))
+                .OrderByDescending(x => x.CreatedAt)
+                .FirstOrDefault();
+        }
+
+        private static void TrackRepresentedCleanup(HashSet<string> representedCleanupIds, MediaCleanupRecord cleanup)
+        {
+            if (!string.IsNullOrEmpty(cleanup?.Id))
+            {
+                representedCleanupIds.Add(cleanup.Id);
+            }
         }
 
         private static MediaCleanupActionResult Success(string message, string id = null)
