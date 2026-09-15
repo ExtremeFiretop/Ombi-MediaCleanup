@@ -1,3 +1,7 @@
+## [4.60.38](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.37...v4.60.38) (2026-09-15)
+
+
+
 ## [4.60.37](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.36...v4.60.37) (2026-09-12)
 
 
@@ -472,10 +476,6 @@
 ### Features
 
 * add auto-update settings UI and improve updater configuration ([#1460](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/1460)) ([#5394](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5394)) ([ba9f972](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/ba9f9727e527e6e7631b6d87b90f248e2de4ffe4))
-
-
-
-## [4.58.5](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.58.4...v4.58.5) (2026-04-17)
 
 
 
