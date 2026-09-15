@@ -171,6 +171,48 @@ namespace Ombi.Schedule.Tests
         }
 
         [Test]
+        public async Task LinkedLocalAdmin_IsReusedForOwnerTargetInsteadOfCreatingDuplicatePlexUser()
+        {
+            const string numericOwnerId = "11223344";
+            var users = new List<OmbiUser>
+            {
+                new OmbiUser
+                {
+                    Id = AdminOmbiId,
+                    UserName = "owner",
+                    NormalizedUserName = "OWNER",
+                    UserType = UserType.LocalUser,
+                    ProviderUserId = numericOwnerId,
+                    MediaServerToken = AdminToken
+                },
+            };
+            var userMgr = MockHelper.MockUserManager(users);
+            SetupAdminRole(userMgr, AdminOmbiId);
+            _mocker.Use(userMgr);
+            _mocker.Setup<IPlexApi, Task<PlexAccount>>(x => x.GetAccount(AdminToken))
+                .ReturnsAsync(new PlexAccount
+                {
+                    user = new User
+                    {
+                        uuid = AdminUuid,
+                        id = numericOwnerId,
+                        username = "owner",
+                        title = "Owner"
+                    }
+                });
+            _subject = _mocker.CreateInstance<PlexWatchlistImport>();
+            UseDefaultPlexSettings();
+
+            await _subject.Execute(_context.Object);
+
+            _mocker.Verify<Core.Authentication.OmbiUserManager>(
+                x => x.CreateAsync(It.IsAny<OmbiUser>()), Times.Never);
+            _mocker.Verify<IPlexApi>(
+                x => x.GetWatchlistForUser(AdminToken, AdminUuid, It.IsAny<string>(), It.IsAny<CancellationToken>()),
+                Times.Once);
+        }
+
+        [Test]
         public async Task LinkedSystemUserOAuthToken_IsIgnoredForWatchlistImport()
         {
             var users = new List<OmbiUser>

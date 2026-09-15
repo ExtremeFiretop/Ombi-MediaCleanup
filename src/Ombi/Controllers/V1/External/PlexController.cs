@@ -283,6 +283,30 @@ namespace Ombi.Controllers.V1.External
                         Id = u.Id
                     }));
                 }
+
+                // The user-management exclusion picker historically only listed /api/users,
+                // which contains shared/friend accounts but not the Plex server owner. The
+                // watchlist importer now treats the owner as an import target too, so include
+                // the owner here to make that target selectable in "Plex Users excluded from
+                // Import". BannedPlexUserIds is keyed by this numeric plex.tv account id.
+                try
+                {
+                    var account = await PlexApi.GetAccount(server.PlexAuthToken);
+                    if (account?.user != null && !string.IsNullOrWhiteSpace(account.user.id))
+                    {
+                        vm.Add(new UsersViewModel
+                        {
+                            Username = account.user.username ?? account.user.title,
+                            Id = account.user.id
+                        });
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Friends can still be configured even if owner lookup is temporarily
+                    // unavailable. Avoid making the whole settings picker fail for that case.
+                    _log.LogWarning(ex, "Unable to resolve Plex server owner for the user-management exclusion list");
+                }
             }
 
             // Filter out any dupes
