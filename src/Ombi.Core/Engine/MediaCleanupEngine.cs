@@ -32,6 +32,22 @@ namespace Ombi.Core.Engine
     {
         private static readonly SemaphoreSlim StateLock = new SemaphoreSlim(1, 1);
 
+        // Quartz schedules jobs at whole-second precision, while DateTime.UtcNow includes
+        // sub-second ticks. Keep cleanup deadlines at the same precision so a job that
+        // fires at the displayed due second cannot miss an otherwise-due record and defer
+        // deletion until the next scheduler pass.
+        private static DateTime TruncateToSecond(DateTime value)
+        {
+            return value.AddTicks(-(value.Ticks % TimeSpan.TicksPerSecond));
+        }
+
+        private static bool IsDeletionDue(DateTime scheduledForDeletionAt, DateTime now)
+        {
+            // Truncate both sides for backwards compatibility with records created by
+            // older builds that persisted fractional seconds in ScheduledForDeletionAt.
+            return TruncateToSecond(scheduledForDeletionAt) <= TruncateToSecond(now);
+        }
+
         private readonly ISettingsService<MediaCleanupSettings> _settings;
         private readonly ISettingsService<MediaCleanupState> _state;
         private readonly ISettingsService<RadarrSettings> _radarrSettings;
@@ -638,7 +654,7 @@ namespace Ombi.Core.Engine
                 }
 
                 record.Status = MediaCleanupStatus.ScheduledForDeletion;
-                record.ScheduledForDeletionAt = DateTime.UtcNow;
+                record.ScheduledForDeletionAt = TruncateToSecond(DateTime.UtcNow);
                 state.Requests.Add(record);
 
                 // Immediate deletion is synchronous. Persist the final state once after the
@@ -845,7 +861,7 @@ namespace Ombi.Core.Engine
 
                 record.ApprovedByUserId = user.Id;
                 record.Status = MediaCleanupStatus.ScheduledForDeletion;
-                record.ScheduledForDeletionAt = DateTime.UtcNow.AddDays(Math.Max(0, settings.GracePeriodDays));
+                record.ScheduledForDeletionAt = TruncateToSecond(DateTime.UtcNow).AddDays(Math.Max(0, settings.GracePeriodDays));
                 await SaveState(state);
                 return Success("Cleanup approved and scheduled for deletion.", record.Id);
             }
@@ -922,7 +938,7 @@ namespace Ombi.Core.Engine
 
                     if (record.Status == MediaCleanupStatus.ScheduledForDeletion &&
                         record.ScheduledForDeletionAt.HasValue &&
-                        record.ScheduledForDeletionAt.Value <= now &&
+                        IsDeletionDue(record.ScheduledForDeletionAt.Value, now) &&
                         IsOriginEnabled(record, settings))
                     {
                         await ExecuteDeletion(record, settings);
@@ -1974,7 +1990,7 @@ namespace Ombi.Core.Engine
                 if (record.Status != MediaCleanupStatus.ScheduledForDeletion)
                 {
                     record.Status = MediaCleanupStatus.ScheduledForDeletion;
-                    record.ScheduledForDeletionAt = now.AddDays(Math.Max(0, settings.GracePeriodDays));
+                    record.ScheduledForDeletionAt = TruncateToSecond(now).AddDays(Math.Max(0, settings.GracePeriodDays));
                 }
                 return;
             }
