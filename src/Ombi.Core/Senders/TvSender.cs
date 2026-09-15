@@ -8,25 +8,29 @@ using Ombi.Api.External.ExternalApis.SickRage;
 using Ombi.Api.External.ExternalApis.SickRage.Models;
 using Ombi.Api.External.ExternalApis.Sonarr;
 using Ombi.Api.External.ExternalApis.Sonarr.Models;
+using Ombi.Api.External.ExternalApis.TheMovieDb;
 using Ombi.Core.Settings;
 using Ombi.Helpers;
 using Ombi.Settings.Settings.Models.External;
 using Ombi.Store.Entities;
 using Ombi.Store.Entities.Requests;
 using Ombi.Store.Repository;
+using Ombi.Store.Repository.Requests;
 
 namespace Ombi.Core.Senders
 {
     public class TvSender : ITvSender
     {
         public TvSender(ISonarrV3Api sonarrV3Api, ILogger<TvSender> log, ISettingsService<SonarrSettings> sonarrSettings,
-            ISettingsService<SickRageSettings> srSettings,
+            ISettingsService<SickRageSettings> srSettings, IMovieDbApi movieDbApi, ITvRequestRepository tvRequestRepository,
             ISickRageApi srApi, IRepository<UserQualityProfiles> userProfiles, IRepository<RequestQueue> requestQueue, INotificationHelper notify)
         {
             SonarrApi = sonarrV3Api;
             Logger = log;
             SonarrSettings = sonarrSettings;
             SickRageSettings = srSettings;
+            MovieDbApi = movieDbApi;
+            TvRequestRepository = tvRequestRepository;
             SickRageApi = srApi;
             UserQualityProfiles = userProfiles;
             _requestQueueRepository = requestQueue;
@@ -38,6 +42,8 @@ namespace Ombi.Core.Senders
         private ILogger<TvSender> Logger { get; }
         private ISettingsService<SonarrSettings> SonarrSettings { get; }
         private ISettingsService<SickRageSettings> SickRageSettings { get; }
+        private IMovieDbApi MovieDbApi { get; }
+        private ITvRequestRepository TvRequestRepository { get; }
         private IRepository<UserQualityProfiles> UserQualityProfiles { get; }
         private readonly IRepository<RequestQueue> _requestQueueRepository;
         private readonly INotificationHelper _notificationHelper;
@@ -117,6 +123,9 @@ namespace Ombi.Core.Senders
             {
                 return null;
             }
+
+            await EnsureTvDbId(model);
+
             var options = new SonarrSendOptions();
 
             int qualityToUse;
@@ -346,6 +355,57 @@ namespace Ombi.Core.Senders
             {
                 Logger.LogError(LoggingEvents.SonarrSender, e, "Exception thrown when attempting to send series over to Sonarr");
                 throw;
+            }
+        }
+
+        private async Task EnsureTvDbId(ChildRequests model)
+        {
+            if (model?.ParentRequest == null || model.ParentRequest.TvDbId > 0)
+            {
+                return;
+            }
+
+            var parent = model.ParentRequest;
+            if (parent.ExternalProviderId <= 0)
+            {
+                throw new MissingTvDbIdException(
+                    $"{MissingTvDbAfterRefreshPrefix}: '{parent.Title}' (child request {model.Id}) also has no TheMovieDb ID, so Ombi cannot repair the mapping automatically.");
+            }
+
+            Logger.LogWarning(
+                "TV request {RequestId} for {Title} is missing a TVDB ID; refreshing TMDB external IDs for TMDB {TmdbId}",
+                model.Id, parent.Title, parent.ExternalProviderId);
+
+            // Let network/API exceptions propagate normally. Those are transient failures and
+            // should remain eligible for the regular failed-request retry mechanism.
+            var externalIds = await MovieDbApi.GetTvExternals(parent.ExternalProviderId);
+            if (externalIds?.tvdb_id <= 0)
+            {
+                throw new MissingTvDbIdException(
+                    $"{MissingTvDbAfterRefreshPrefix}: '{parent.Title}' (child request {model.Id}, TMDB {parent.ExternalProviderId}) still has no TVDB mapping.");
+            }
+
+            parent.TvDbId = externalIds.tvdb_id;
+            if (string.IsNullOrEmpty(parent.ImdbId) && !string.IsNullOrEmpty(externalIds.imdb_id))
+            {
+                parent.ImdbId = externalIds.imdb_id;
+            }
+
+            // Requests are persisted before they are auto-sent, and retry-queue requests are loaded
+            // tracked from ITvRequestRepository, so saving here permanently repairs old rows too.
+            await TvRequestRepository.Save();
+
+            Logger.LogInformation(
+                "Repaired TV request {RequestId} for {Title}: TMDB {TmdbId} -> TVDB {TvdbId}",
+                model.Id, parent.Title, parent.ExternalProviderId, parent.TvDbId);
+        }
+
+        public const string MissingTvDbAfterRefreshPrefix = "TVDBID is missing after TMDB external-id refresh";
+
+        private sealed class MissingTvDbIdException : Exception
+        {
+            public MissingTvDbIdException(string message) : base(message)
+            {
             }
         }
 

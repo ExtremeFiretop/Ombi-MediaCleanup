@@ -32,6 +32,7 @@ namespace Ombi.Schedule.Jobs.Ombi
         private readonly IMovieRequestRepository _movieRequestRepository;
         private readonly ITvRequestRepository _tvRequestRepository;
         private readonly IMusicRequestRepository _musicRequestRepository;
+        private const int MissingTvDbMaxAutomaticRetries = 3;
 
         public async Task Execute(IJobExecutionContext job)
         {
@@ -67,6 +68,18 @@ namespace Ombi.Schedule.Jobs.Ombi
                         await _requestQueue.SaveChangesAsync();
                         continue;
                     }
+                    // A TV request with no TVDB mapping can never be accepted by Sonarr.
+                    // TvSender gets at least one chance after this patch to repair legacy rows from
+                    // TMDB. If TMDB still has no mapping, stop retrying it every day after a small
+                    // number of attempts. Keep the queue row incomplete so it remains visible under
+                    // Failed Requests. If an admin later supplies a TVDB ID, automatic retries resume.
+                    var unresolvedTvDb = tvRequest.ParentRequest?.TvDbId <= 0 &&
+                        request.Error?.StartsWith(TvSender.MissingTvDbAfterRefreshPrefix, StringComparison.OrdinalIgnoreCase) == true;
+                    if (unresolvedTvDb && request.RetryCount >= MissingTvDbMaxAutomaticRetries)
+                    {
+                        continue;
+                    }
+
                     var result = await _tvSender.Send(tvRequest);
                     if (result.Success)
                     {

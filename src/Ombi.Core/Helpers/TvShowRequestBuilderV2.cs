@@ -35,6 +35,26 @@ namespace Ombi.Core.Helpers
         {
             TheMovieDbRecord = await MovieDbApi.GetTVInfo(id.ToString(), langCode);
 
+            // Sonarr requires a TVDB ID. TMDB's appended external_ids payload can occasionally
+            // be absent/incomplete even though the dedicated external_ids endpoint has the mapping.
+            // Refresh it before persisting the Ombi request so new requests do not enter the retry
+            // queue with TvDbId = 0.
+            if (!int.TryParse(TheMovieDbRecord.ExternalIds?.TvDbId, out var tvdbId) || tvdbId <= 0)
+            {
+                var externalIds = await MovieDbApi.GetTvExternals(id);
+                if (externalIds?.tvdb_id > 0)
+                {
+                    TheMovieDbRecord.ExternalIds ??= new ExternalIds();
+                    TheMovieDbRecord.ExternalIds.TvDbId = externalIds.tvdb_id.ToString();
+
+                    if (string.IsNullOrEmpty(TheMovieDbRecord.ExternalIds.ImdbId) &&
+                        !string.IsNullOrEmpty(externalIds.imdb_id))
+                    {
+                        TheMovieDbRecord.ExternalIds.ImdbId = externalIds.imdb_id;
+                    }
+                }
+            }
+
             // Remove 'Specials Season'
             var firstSeason = TheMovieDbRecord.seasons.OrderBy(x => x.season_number).FirstOrDefault();
             if (firstSeason?.season_number == 0)
