@@ -355,13 +355,17 @@ namespace Ombi.Schedule.Jobs.Plex
 
         private async Task<(OmbiUser user, bool usernameCollision)> ResolveExistingUser(PlexCommunityUser plexUser, string resolvedNumericId, CancellationToken ct)
         {
-            // Primary lookup: numeric plex.tv id (the canonical identifier). New rows only
-            // ever get the numeric id, and existing legacy rows have it too.
+            // Primary lookup: numeric plex.tv id (the canonical identifier). Linked local
+            // administrators keep UserType.LocalUser so local-password authentication continues
+            // to work, but PR #5467 stores the verified Plex account id in ProviderUserId. Treat
+            // that exact provider-id match as the same Plex identity instead of trying to create
+            // a duplicate PlexUser row with the same username.
             OmbiUser existing = null;
             if (resolvedNumericId != null)
             {
                 existing = await _ombiUserManager.Users.FirstOrDefaultAsync(
-                    x => x.UserType == UserType.PlexUser && x.ProviderUserId == resolvedNumericId, ct);
+                    x => (x.UserType == UserType.PlexUser || x.UserType == UserType.LocalUser) &&
+                         x.ProviderUserId == resolvedNumericId, ct);
             }
             if (existing != null || string.IsNullOrWhiteSpace(plexUser.username))
             {
