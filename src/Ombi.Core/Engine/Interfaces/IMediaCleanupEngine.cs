@@ -22,6 +22,7 @@ namespace Ombi.Core.Engine.Interfaces
         Task<MediaCleanupActionResult> Approve(string cleanupRequestId);
         Task<MediaCleanupActionResult> Reject(string cleanupRequestId);
         Task<MediaCleanupActionResult> Cancel(string cleanupRequestId);
+        Task CancelForDeletedMediaRequest(RequestType requestType, int requestId, int theMovieDbId = 0, int tvDbId = 0);
         Task ProcessPending();
     }
 }

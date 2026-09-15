@@ -35,7 +35,8 @@ namespace Ombi.Core.Engine
             ISettingsService<OmbiSettings> ombiSettings, IRepository<RequestSubscription> sub, IMediaCacheService mediaCacheService,
             IFeatureService featureService,
             IUserPlayedMovieRepository userPlayedMovieRepository,
-            IQualityProfileSelectionService qualityProfileSelectionService)
+            IQualityProfileSelectionService qualityProfileSelectionService,
+            IMediaCleanupEngine mediaCleanupEngine = null)
             : base(user, requestService, r, manager, cache, ombiSettings, sub)
         {
             MovieApi = movieApi;
@@ -47,6 +48,7 @@ namespace Ombi.Core.Engine
             _featureService = featureService;
             _userPlayedMovieRepository = userPlayedMovieRepository;
             _qualityProfileSelectionService = qualityProfileSelectionService;
+            _mediaCleanupEngine = mediaCleanupEngine;
         }
 
         private IMovieDbApi MovieApi { get; }
@@ -58,6 +60,7 @@ namespace Ombi.Core.Engine
         private readonly IFeatureService _featureService;
         protected readonly IUserPlayedMovieRepository _userPlayedMovieRepository;
         private readonly IQualityProfileSelectionService _qualityProfileSelectionService;
+        private readonly IMediaCleanupEngine _mediaCleanupEngine;
 
         /// <summary>
         /// Requests the movie.
@@ -818,6 +821,13 @@ namespace Ombi.Core.Engine
             });
 
             await MovieRepository.Delete(request);
+            if (_mediaCleanupEngine != null)
+            {
+                await _mediaCleanupEngine.CancelForDeletedMediaRequest(
+                    RequestType.Movie,
+                    request.Id,
+                    request.TheMovieDbId);
+            }
             await _mediaCacheService.Purge();
             return new RequestEngineResult
             {
@@ -827,8 +837,20 @@ namespace Ombi.Core.Engine
 
         public async Task RemoveAllMovieRequests()
         {
-            var request = MovieRepository.GetAll();
-            await MovieRepository.DeleteRange(request);
+            var requests = await MovieRepository.GetAll().ToListAsync();
+            await MovieRepository.DeleteRange(requests);
+
+            if (_mediaCleanupEngine != null)
+            {
+                foreach (var request in requests)
+                {
+                    await _mediaCleanupEngine.CancelForDeletedMediaRequest(
+                        RequestType.Movie,
+                        request.Id,
+                        request.TheMovieDbId);
+                }
+            }
+
             await _mediaCacheService.Purge();
         }
 

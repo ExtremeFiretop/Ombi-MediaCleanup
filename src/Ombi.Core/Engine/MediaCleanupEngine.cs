@@ -1046,6 +1046,51 @@ namespace Ombi.Core.Engine
             }
         }
 
+        public async Task CancelForDeletedMediaRequest(
+            RequestType requestType,
+            int requestId,
+            int theMovieDbId = 0,
+            int tvDbId = 0)
+        {
+            // Request deletion is authoritative. If the underlying Ombi request is explicitly
+            // removed, any cleanup workflow for that request must stop as well so voters are
+            // never reminded about, or asked to act on, a request that no longer exists.
+            await StateLock.WaitAsync();
+            try
+            {
+                var state = await LoadState();
+                var matches = state.Requests
+                    .Where(x => x != null &&
+                                IsActive(x) &&
+                                IsSameCleanupMedia(x, requestType, requestId, theMovieDbId, tvDbId))
+                    .ToList();
+
+                if (matches.Count == 0)
+                {
+                    return;
+                }
+
+                foreach (var record in matches)
+                {
+                    record.Status = MediaCleanupStatus.Cancelled;
+                    record.ScheduledForDeletionAt = null;
+                }
+
+                await SaveState(state);
+                _logger.LogInformation(
+                    "Cancelled {Count} active Media Cleanup workflow(s) because the underlying Ombi {RequestType} request was deleted. RequestId={RequestId}, TMDB={TmdbId}, TVDB={TvdbId}",
+                    matches.Count,
+                    requestType,
+                    requestId,
+                    theMovieDbId,
+                    tvDbId);
+            }
+            finally
+            {
+                StateLock.Release();
+            }
+        }
+
         public async Task ProcessPending()
         {
             await StateLock.WaitAsync();

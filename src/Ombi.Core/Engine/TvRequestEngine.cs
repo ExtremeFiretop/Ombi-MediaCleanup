@@ -38,7 +38,8 @@ namespace Ombi.Core.Engine
             ITvSender sender, IRepository<RequestLog> rl, ISettingsService<OmbiSettings> settings, ICacheService cache,
             IRepository<RequestSubscription> sub, IMediaCacheService mediaCacheService,
             IUserPlayedEpisodeRepository userPlayedEpisodeRepository,
-            IQualityProfileSelectionService qualityProfileSelectionService) : base(user, requestService, rule, manager, cache, settings, sub)
+            IQualityProfileSelectionService qualityProfileSelectionService,
+            IMediaCleanupEngine mediaCleanupEngine = null) : base(user, requestService, rule, manager, cache, settings, sub)
         {
             TvApi = tvApi;
             MovieDbApi = movApi;
@@ -49,6 +50,7 @@ namespace Ombi.Core.Engine
             _mediaCacheService = mediaCacheService;
             _userPlayedEpisodeRepository = userPlayedEpisodeRepository;
             _qualityProfileSelectionService = qualityProfileSelectionService;
+            _mediaCleanupEngine = mediaCleanupEngine;
         }
 
         private INotificationHelper NotificationHelper { get; }
@@ -61,6 +63,7 @@ namespace Ombi.Core.Engine
         private readonly IMediaCacheService _mediaCacheService;
         private readonly IUserPlayedEpisodeRepository _userPlayedEpisodeRepository;
         private readonly IQualityProfileSelectionService _qualityProfileSelectionService;
+        private readonly IMediaCleanupEngine _mediaCleanupEngine;
 
         public async Task<RequestEngineResult> RequestTvShow(TvRequestViewModel tv)
         {
@@ -891,6 +894,14 @@ namespace Ombi.Core.Engine
             if (parent != null && parent.ChildRequests.Count <= 1)
             {
                 await TvRepository.DeleteRequest(parent);
+                if (_mediaCleanupEngine != null)
+                {
+                    await _mediaCleanupEngine.CancelForDeletedMediaRequest(
+                        RequestType.TvShow,
+                        parent.Id,
+                        parent.ExternalProviderId,
+                        parent.TvDbId);
+                }
             }
             else
             {
@@ -931,6 +942,14 @@ namespace Ombi.Core.Engine
             }
 
             await TvRepository.DeleteRequest(request);
+            if (_mediaCleanupEngine != null)
+            {
+                await _mediaCleanupEngine.CancelForDeletedMediaRequest(
+                    RequestType.TvShow,
+                    request.Id,
+                    request.ExternalProviderId,
+                    request.TvDbId);
+            }
             await _mediaCacheService.Purge();
         }
 
