@@ -4,6 +4,7 @@ using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Xml.Serialization;
@@ -29,6 +30,17 @@ namespace Ombi.Api
         private readonly HttpClient _client;
         private readonly ICacheService _cacheService;
         private readonly IHostEnvironment _hostEnvironment;
+
+        // DNS failures are often very short-lived (for example while a local resolver
+        // restarts or an upstream resolver briefly fails to answer). Retrying only
+        // name-resolution failures is safe even for POST requests because the request
+        // has not reached the remote server when DNS resolution fails.
+        private static readonly TimeSpan[] DnsRetryDelays =
+        {
+            TimeSpan.FromSeconds(1),
+            TimeSpan.FromSeconds(3),
+            TimeSpan.FromSeconds(10),
+        };
 
         public static readonly JsonSerializerSettings Settings = new JsonSerializerSettings
         {
@@ -92,39 +104,11 @@ namespace Ombi.Api
             {
                 AddHeadersBody(request, httpRequestMessage);
 
-                var httpResponseMessage = await _client.SendAsync(httpRequestMessage, cancellationToken);
+                var httpResponseMessage = await SendRequestAsync(request, httpRequestMessage, cancellationToken);
 
-                if (!httpResponseMessage.IsSuccessStatusCode)
+                if (!httpResponseMessage.IsSuccessStatusCode && !request.IgnoreErrors)
                 {
-                    if (!request.IgnoreErrors)
-                    {
-                        await LogError(request, httpResponseMessage);
-                    }
-
-                    if (request.Retry)
-                    {
-
-                        var result = Policy
-                            .Handle<HttpRequestException>()
-                            .OrResult<HttpResponseMessage>(r => request.StatusCodeToRetry.Contains(r.StatusCode))
-                            .WaitAndRetryAsync(new[]
-                            {
-                                TimeSpan.FromSeconds(10),
-                            }, (exception, timeSpan, context) =>
-                            {
-
-                                Logger.LogError(LoggingEvents.Api,
-                                    $"Retrying RequestUri: {request.FullUri} Because we got Status Code: {exception?.Result?.StatusCode}");
-                            });
-
-                        httpResponseMessage = await result.ExecuteAsync(async () =>
-                        {
-                            using (var req = await httpRequestMessage.Clone())
-                            {
-                                return await _client.SendAsync(req, cancellationToken);
-                            }
-                        });
-                    }
+                    await LogError(request, httpResponseMessage);
                 }
 
                 // Only cache successful responses
@@ -216,7 +200,7 @@ namespace Ombi.Api
             {
                 AddHeadersBody(request, httpRequestMessage);
 
-                var httpResponseMessage = await _client.SendAsync(httpRequestMessage);
+                var httpResponseMessage = await SendRequestAsync(request, httpRequestMessage, CancellationToken.None);
                 if (!httpResponseMessage.IsSuccessStatusCode)
                 {
                     if (!request.IgnoreErrors)
@@ -237,7 +221,7 @@ namespace Ombi.Api
             using (var httpRequestMessage = new HttpRequestMessage(request.HttpMethod, request.FullUri))
             {
                 AddHeadersBody(request, httpRequestMessage);
-                var httpResponseMessage = await _client.SendAsync(httpRequestMessage, token);
+                var httpResponseMessage = await SendRequestAsync(request, httpRequestMessage, token);
                 await LogDebugContent(httpResponseMessage);
                 if (!httpResponseMessage.IsSuccessStatusCode)
                 {
@@ -249,6 +233,96 @@ namespace Ombi.Api
 
                 return httpResponseMessage;
             }
+        }
+
+        private async Task<HttpResponseMessage> SendRequestAsync(Request request, HttpRequestMessage template, CancellationToken cancellationToken)
+        {
+            if (!request.Retry)
+            {
+                return await SendWithDnsRetryAsync(template, cancellationToken);
+            }
+
+            // Preserve the existing opt-in retry behavior for callers that explicitly
+            // request retries (for example TMDB 429 handling), while DNS failures are
+            // handled separately below for every request.
+            var retryPolicy = Policy
+                .Handle<HttpRequestException>(ex => !IsDnsResolutionFailure(ex))
+                .OrResult<HttpResponseMessage>(r => request.StatusCodeToRetry.Contains(r.StatusCode))
+                .WaitAndRetryAsync(new[]
+                {
+                    TimeSpan.FromSeconds(10),
+                }, (outcome, delay, context) =>
+                {
+                    if (outcome.Exception != null)
+                    {
+                        Logger.LogWarning(LoggingEvents.Api,
+                            outcome.Exception,
+                            "Retrying RequestUri: {RequestUri} in {DelaySeconds} seconds because of a transient HTTP error",
+                            request.FullUri, delay.TotalSeconds);
+                        return;
+                    }
+
+                    Logger.LogWarning(LoggingEvents.Api,
+                        "Retrying RequestUri: {RequestUri} in {DelaySeconds} seconds because we got Status Code: {StatusCode}",
+                        request.FullUri, delay.TotalSeconds, outcome.Result?.StatusCode);
+                });
+
+            return await retryPolicy.ExecuteAsync(() => SendWithDnsRetryAsync(template, cancellationToken));
+        }
+
+        private async Task<HttpResponseMessage> SendWithDnsRetryAsync(HttpRequestMessage template, CancellationToken cancellationToken)
+        {
+            for (var attempt = 0; ; attempt++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                using (var request = await template.Clone())
+                {
+                    try
+                    {
+                        return await _client.SendAsync(request, cancellationToken);
+                    }
+                    catch (HttpRequestException ex) when (IsDnsResolutionFailure(ex) && attempt < DnsRetryDelays.Length)
+                    {
+                        var delay = DnsRetryDelays[attempt];
+                        Logger.LogWarning(LoggingEvents.Api,
+                            "DNS resolution failed for {Host}: {Message}. Retrying in {DelaySeconds} seconds (attempt {NextAttempt}/{TotalAttempts})",
+                            template.RequestUri?.Host, ex.Message, delay.TotalSeconds, attempt + 2, DnsRetryDelays.Length + 1);
+                        await Task.Delay(delay, cancellationToken);
+                    }
+                }
+            }
+        }
+
+        private static bool IsDnsResolutionFailure(HttpRequestException exception)
+        {
+            if (exception.HttpRequestError == HttpRequestError.NameResolutionError)
+            {
+                return true;
+            }
+
+            return IsDnsResolutionFailure((Exception)exception);
+        }
+
+        private static bool IsDnsResolutionFailure(Exception exception)
+        {
+            for (var current = exception; current != null; current = current.InnerException)
+            {
+                if (current is SocketException socketException && IsDnsSocketError(socketException.SocketErrorCode))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsDnsSocketError(SocketError error)
+        {
+            return error == SocketError.HostNotFound ||
+                   error == SocketError.TryAgain ||
+                   error == SocketError.NoData ||
+                   error == SocketError.NoRecovery;
         }
 
         private void AddHeadersBody(Request request, HttpRequestMessage httpRequestMessage)
