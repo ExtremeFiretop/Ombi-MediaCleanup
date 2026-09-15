@@ -55,11 +55,41 @@ namespace Ombi.Schedule.Jobs.Ombi
         }
         public async Task<bool> UpdateAvailable(string currentVersion)
         {
-
             var updates = await Processor.Process();
-            var serverVersion = updates.UpdateVersionString;
-            return !serverVersion.Equals(currentVersion, StringComparison.CurrentCultureIgnoreCase);
 
+            // GitHub release tags include a leading "v" (for example v4.60.37),
+            // while AssemblyHelper.GetRuntimeVersion() returns the numeric runtime
+            // version (for example 4.60.37). Compare parsed versions rather than
+            // raw strings so an equal version is not incorrectly reported as an
+            // available update.
+            if (TryParseVersion(updates.UpdateVersionString, out var serverVersion) &&
+                TryParseVersion(currentVersion, out var installedVersion))
+            {
+                return serverVersion > installedVersion;
+            }
+
+            // ChangeLogProcessor already performs a semantic version comparison
+            // against the running assembly. Fall back to that result if either
+            // supplied version cannot be parsed.
+            return updates.UpdateAvailable;
+        }
+
+        private static bool TryParseVersion(string value, out Version version)
+        {
+            version = null;
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return false;
+            }
+
+            var normalized = value.Trim().TrimStart('v', 'V');
+            var suffixIndex = normalized.IndexOf('-');
+            if (suffixIndex >= 0)
+            {
+                normalized = normalized.Substring(0, suffixIndex);
+            }
+
+            return Version.TryParse(normalized, out version);
         }
 
         public async Task Execute(IJobExecutionContext job)
@@ -82,16 +112,16 @@ namespace Ombi.Schedule.Jobs.Ombi
             try
             {
                 var productArray = GetVersion();
-                var version = productArray[0];
+                var version = productArray.FirstOrDefault() ?? productVersion;
                 Logger.LogDebug(LoggingEvents.Updater, "Version {0}", version);
-                var branch = productArray[1];
-                Logger.LogDebug(LoggingEvents.Updater, "Branch Version {0}", branch);
 
-                Logger.LogDebug(LoggingEvents.Updater, "Version {0}", version);
-                Logger.LogDebug(LoggingEvents.Updater, "Branch {0}", branch);
-
+                // Runtime versions are no longer guaranteed to contain the old
+                // "version-branch" suffix. Older updater code unconditionally
+                // accessed productArray[1], which crashes with IndexOutOfRangeException
+                // for normal versions such as "4.60.37". The configured update
+                // branch is already handled by ChangeLogProcessor, so no branch
+                // token is needed here.
                 Logger.LogDebug(LoggingEvents.Updater, "Looking for updates now");
-                //TODO this fails because the branch = featureupdater when it should be feature/updater
                 var updates = await Processor.Process();
                 Logger.LogDebug(LoggingEvents.Updater, "Updates: {0}", updates);
 
@@ -101,11 +131,16 @@ namespace Ombi.Schedule.Jobs.Ombi
                 Logger.LogDebug(LoggingEvents.Updater, "Service Version {0}", updates.UpdateVersionString);
 
 
-                if (!serverVersion.Equals(version, StringComparison.CurrentCultureIgnoreCase) || settings.TestMode)
+                // Use ChangeLogProcessor's semantic Version comparison. A raw
+                // string comparison would treat "v4.60.37" and "4.60.37" as
+                // different and could repeatedly trigger the updater even when the
+                // installed version is already current.
+                if (updates.UpdateAvailable || settings.TestMode)
                 {
                     try
                     {
-                        await _notificationHubService.SendNotificationToAdmins($"Ombi update available: v{serverVersion}. Downloading...");
+                        var displayVersion = serverVersion?.TrimStart('v', 'V');
+                        await _notificationHubService.SendNotificationToAdmins($"Ombi update available: v{displayVersion}. Downloading...");
                     }
                     catch (Exception notifyEx)
                     {
