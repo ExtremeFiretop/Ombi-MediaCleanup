@@ -516,7 +516,10 @@ namespace Ombi.Schedule.Jobs.Plex
             var pageCount = 0;
             var returnedCount = 0;
             var resolvedCount = 0;
-            var newItemsProcessed = 0;
+            var itemsProcessed = 0;
+            var newRequestsCreated = 0;
+            var alreadyRequestedCount = 0;
+            var failedItemsCount = 0;
             var unresolvedTitles = new List<string>();
             string snapshotFetchFailure = null;
 
@@ -708,20 +711,35 @@ namespace Ombi.Schedule.Jobs.Plex
                 }
 
                 var nodeType = node.type ?? string.Empty;
+                WatchlistProcessResult processResult;
                 if (nodeType.Equals("show", StringComparison.OrdinalIgnoreCase) ||
                     nodeType.Equals("tvshow", StringComparison.OrdinalIgnoreCase))
                 {
-                    await ProcessShow(tmdbId, user, monitorAll);
-                    newItemsProcessed++;
+                    itemsProcessed++;
+                    processResult = await ProcessShow(tmdbId, user, monitorAll);
                 }
                 else if (nodeType.Equals("movie", StringComparison.OrdinalIgnoreCase))
                 {
-                    await ProcessMovie(tmdbId, user);
-                    newItemsProcessed++;
+                    itemsProcessed++;
+                    processResult = await ProcessMovie(tmdbId, user);
                 }
                 else
                 {
                     _logger.LogDebug($"Skipping unknown watchlist type '{node.type}' for {node.title}");
+                    continue;
+                }
+
+                switch (processResult)
+                {
+                    case WatchlistProcessResult.Created:
+                        newRequestsCreated++;
+                        break;
+                    case WatchlistProcessResult.AlreadyRequested:
+                        alreadyRequestedCount++;
+                        break;
+                    case WatchlistProcessResult.Failed:
+                        failedItemsCount++;
+                        break;
                 }
             }
 
@@ -741,9 +759,13 @@ namespace Ombi.Schedule.Jobs.Plex
                 cleanupReason = $" (unresolved metadata: {titles})";
             }
 
+            var processingFailureSummary = failedItemsCount > 0
+                ? $", {failedItemsCount} failed"
+                : string.Empty;
+
             _logger.LogInformation(
-                "[PlexWatchlist] User '{User}': {ReturnedCount} items returned, {ResolvedCount} resolved, {UnresolvedCount} unresolved, {NewItemsProcessed} new items processed, history cleanup {CleanupState}{CleanupReason}",
-                user.UserName, returnedCount, resolvedCount, unresolvedTitles.Count, newItemsProcessed, cleanupState, cleanupReason);
+                "[PlexWatchlist] User '{User}': {ReturnedCount} items returned, {ResolvedCount} resolved, {UnresolvedCount} unresolved, {ItemsProcessed} items processed, {NewRequestsCreated} new requests created, {AlreadyRequestedCount} already requested{ProcessingFailureSummary}, history cleanup {CleanupState}{CleanupReason}",
+                user.UserName, returnedCount, resolvedCount, unresolvedTitles.Count, itemsProcessed, newRequestsCreated, alreadyRequestedCount, processingFailureSummary, cleanupState, cleanupReason);
 
             return string.IsNullOrWhiteSpace(snapshotFetchFailure) && !ct.IsCancellationRequested;
         }
@@ -794,7 +816,14 @@ namespace Ombi.Schedule.Jobs.Plex
             return string.Empty;
         }
 
-        private async Task ProcessMovie(int theMovieDbId, OmbiUser user)
+        private enum WatchlistProcessResult
+        {
+            Created,
+            AlreadyRequested,
+            Failed
+        }
+
+        private async Task<WatchlistProcessResult> ProcessMovie(int theMovieDbId, OmbiUser user)
         {
             _movieRequestEngine.SetUser(user);
             var response = await _movieRequestEngine.RequestMovie(new() { TheMovieDbId = theMovieDbId, Source = RequestSource.PlexWatchlist });
@@ -804,18 +833,18 @@ namespace Ombi.Schedule.Jobs.Plex
                 {
                     _logger.LogDebug($"Movie already requested for user '{user.UserName}'");
                     await AddToHistory(theMovieDbId, user.Id);
-                    return;
+                    return WatchlistProcessResult.AlreadyRequested;
                 }
                 _logger.LogInformation($"Error adding title from PlexWatchlist for user '{user.UserName}'. Message: '{response.ErrorMessage}'");
+                return WatchlistProcessResult.Failed;
             }
-            else
-            {
-                await AddToHistory(theMovieDbId, user.Id);
-                _logger.LogInformation($"Added title from PlexWatchlist for user '{user.UserName}'. {response.Message}");
-            }
+
+            await AddToHistory(theMovieDbId, user.Id);
+            _logger.LogInformation($"Added title from PlexWatchlist for user '{user.UserName}'. {response.Message}");
+            return WatchlistProcessResult.Created;
         }
 
-        private async Task ProcessShow(int theMovieDbId, OmbiUser user, bool requestAll)
+        private async Task<WatchlistProcessResult> ProcessShow(int theMovieDbId, OmbiUser user, bool requestAll)
         {
             _tvRequestEngine.SetUser(user);
             var requestModel = new TvRequestViewModelV2 { LatestSeason = true, TheMovieDbId = theMovieDbId, Source = RequestSource.PlexWatchlist };
@@ -827,19 +856,20 @@ namespace Ombi.Schedule.Jobs.Plex
             var response = await _tvRequestEngine.RequestTvShow(requestModel);
             if (response.IsError)
             {
-                if (response.ErrorCode == ErrorCode.AlreadyRequested)
+                if (response.ErrorCode == ErrorCode.AlreadyRequested ||
+                    response.ErrorCode == ErrorCode.EpisodesAlreadyRequested)
                 {
                     _logger.LogDebug($"Show already requested for user '{user.UserName}'");
                     await AddToHistory(theMovieDbId, user.Id);
-                    return;
+                    return WatchlistProcessResult.AlreadyRequested;
                 }
                 _logger.LogInformation($"Error adding title from PlexWatchlist for user '{user.UserName}'. Message: '{response.ErrorMessage}'");
+                return WatchlistProcessResult.Failed;
             }
-            else
-            {
-                await AddToHistory(theMovieDbId, user.Id);
-                _logger.LogInformation($"Added title from PlexWatchlist for user '{user.UserName}'. {response.Message}");
-            }
+
+            await AddToHistory(theMovieDbId, user.Id);
+            _logger.LogInformation($"Added title from PlexWatchlist for user '{user.UserName}'. {response.Message}");
+            return WatchlistProcessResult.Created;
         }
 
         private async Task AddToHistory(int theMovieDbId, string userId)
