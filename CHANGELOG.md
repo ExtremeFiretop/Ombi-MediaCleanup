@@ -1,3 +1,7 @@
+## [4.60.40](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.39...v4.60.40) (2026-09-20)
+
+
+
 ## [4.60.39](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.38...v4.60.39) (2026-09-15)
 
 
@@ -454,23 +458,6 @@
 
 * centre requested carousel items ([01c4fa9](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/01c4fa916f5e6cc57cea459ad4300443ba457caa))
 * use dynamic scroll sizing for recently requested carousel ([5b0f325](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/5b0f3252f68d33f93c26b54cdf83780697ed6172))
-
-
-
-## [4.53.5](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.59.0...v4.53.5) (2026-04-20)
-
-
-### Bug Fixes
-
-* reset sqlite_sequence after cache table deletes to prevent Int32 overflow ([#5398](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5398)) ([02e7c8e](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/02e7c8e3c013b9c4620c381e143ecbded25f694d)), closes [#5224](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5224)
-
-
-
-## [4.53.4](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.54.0...v4.53.4) (2026-01-08)
-
-
-
-## [4.47.1](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.47.0...v4.47.1) (2025-01-05)
 
 
 
