@@ -237,12 +237,9 @@ namespace Ombi.Controllers.V1
         [ProducesResponseType(401)]
         public async Task<IActionResult> OAuth([FromBody] PlexOAuthPollRequest request)
         {
-            if (request == null || !PlexOAuthPollToken.IsValid(request.PollToken))
-            {
-                return BadRequest(new { errorMessage = "Plex OAuth session is missing or invalid" });
-            }
-
-            var accessToken = await _plexOAuthManager.GetAccessTokenFromPollToken(request.PollToken);
+            // Poll-token format and server-side session validation belong to the OAuth manager.
+            // Always delegate here so user-controlled input does not gate the sensitive redemption call.
+            var accessToken = await _plexOAuthManager.GetAccessTokenFromPollToken(request?.PollToken);
             if (accessToken.IsNullOrEmpty())
             {
                 return PlexOAuthError("Could not authenticate with Plex");
