@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Ombi.Core.Models.Search;
 using Ombi.Core.Rule.Interfaces;
@@ -121,15 +122,50 @@ namespace Ombi.Core.Rule.Rules.Search
                 return;
             }
 
-            var allEpisodes = GetAllEpisodes();
-            foreach (var season in search.SeasonRequests.ToList())
+            try
             {
-                foreach (var episode in season.Episodes.ToList())
+                var allEpisodes = GetAllEpisodes();
+                IQueryable<IMediaServerEpisode> matchingEpisodes = null;
+
+                // FindContent records which provider ID produced the series match. Filter the
+                // episode table by that same ID once, instead of issuing one query per episode.
+                if (lookup.UseImdb)
                 {
-                    await AvailabilityRuleHelper.SingleEpisodeCheck(
-                        lookup.UseImdb, allEpisodes, episode, season, item,
-                        lookup.UseTheMovieDb, lookup.UseTvDb, Log);
+                    matchingEpisodes = allEpisodes.Where(x => x.Series.ImdbId == item.ImdbId);
                 }
+                else if (lookup.UseTheMovieDb)
+                {
+                    matchingEpisodes = allEpisodes.Where(x => x.Series.TheMovieDbId == item.TheMovieDbId);
+                }
+                else if (lookup.UseTvDb)
+                {
+                    matchingEpisodes = allEpisodes.Where(x => x.Series.TvDbId == item.TvDbId);
+                }
+
+                if (matchingEpisodes != null)
+                {
+                    var availableEpisodes = await matchingEpisodes
+                        .Select(x => new { x.SeasonNumber, x.EpisodeNumber })
+                        .ToListAsync();
+                    var availableEpisodeKeys = availableEpisodes
+                        .Select(x => (x.SeasonNumber, x.EpisodeNumber))
+                        .ToHashSet();
+
+                    foreach (var season in search.SeasonRequests)
+                    {
+                        foreach (var episode in season.Episodes)
+                        {
+                            if (availableEpisodeKeys.Contains((season.SeasonNumber, episode.EpisodeNumber)))
+                            {
+                                episode.Available = true;
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Log.LogError(e, "Exception thrown when attempting to check if something is available");
             }
 
             AvailabilityRuleHelper.CheckForUnairedEpisodes(search);

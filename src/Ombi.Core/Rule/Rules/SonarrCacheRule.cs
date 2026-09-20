@@ -26,39 +26,32 @@ namespace Ombi.Core.Rule.Rules
             if (obj.RequestType == RequestType.TvShow)
             {
                 var vm = (ChildRequests) obj;
-                var result = await _ctx.SonarrCache.FirstOrDefaultAsync(x => x.TheMovieDbId == vm.Id);
-                if (result != null)
+                var existsInSonarr = await _ctx.SonarrCache
+                    .AsNoTracking()
+                    .AnyAsync(x => x.TheMovieDbId == vm.Id);
+                if (existsInSonarr && vm.SeasonRequests.Any())
                 {
-                    if (vm.SeasonRequests.Any())
+                    // Load the show's Sonarr episode cache once. The previous implementation
+                    // executed a database query for every requested episode.
+                    var sonarrEpisodes = await _ctx.SonarrEpisodeCache
+                        .AsNoTracking()
+                        .Where(x => x.MovieDbId == vm.Id)
+                        .Select(x => new { x.SeasonNumber, x.EpisodeNumber })
+                        .ToListAsync();
+                    var monitoredEpisodes = sonarrEpisodes
+                        .Select(x => (x.SeasonNumber, x.EpisodeNumber))
+                        .ToHashSet();
+
+                    foreach (var season in vm.SeasonRequests)
                     {
-                        var sonarrEpisodes = _ctx.SonarrEpisodeCache;
-                        foreach (var season in vm.SeasonRequests)
-                        {
-                            var toRemove = new List<EpisodeRequests>();
-                            foreach (var ep in season.Episodes)
-                            {
-                                // Check if we have it
-                                var monitoredInSonarr = sonarrEpisodes.FirstOrDefault(x =>
-                                    x.EpisodeNumber == ep.EpisodeNumber && x.SeasonNumber == season.SeasonNumber
-                                    && x.MovieDbId == vm.Id);
-                                if (monitoredInSonarr != null)
-                                {
-                                    toRemove.Add(ep);
-                                                                   }
-                            }
+                        season.Episodes.RemoveAll(ep =>
+                            monitoredEpisodes.Contains((season.SeasonNumber, ep.EpisodeNumber)));
+                    }
 
-                            toRemove.ForEach(x =>
-                            {
-                                season.Episodes.Remove(x);
-                            });
-
-                        }
-                        var anyEpisodes = vm.SeasonRequests.SelectMany(x => x.Episodes).Any();
-
-                        if (!anyEpisodes)
-                        {
-                            return new RuleResult { ErrorCode = ErrorCode.EpisodesAlreadyRequested, Message = $"We already have episodes requested from series {vm.Title}" };
-                        }
+                    var anyEpisodes = vm.SeasonRequests.SelectMany(x => x.Episodes).Any();
+                    if (!anyEpisodes)
+                    {
+                        return new RuleResult { ErrorCode = ErrorCode.EpisodesAlreadyRequested, Message = $"We already have episodes requested from series {vm.Title}" };
                     }
                 }
             }
@@ -76,29 +69,46 @@ namespace Ombi.Core.Rule.Rules
                     return new RuleResult { Success = true };
                 }
                 var tvdbidint = int.Parse(vm.TheTvDbId);
-                var result = await _ctx.SonarrCache.FirstOrDefaultAsync(x => x.TvDbId == tvdbidint);
-                if (result != null)
+                var existsInSonarr = await _ctx.SonarrCache
+                    .AsNoTracking()
+                    .AnyAsync(x => x.TvDbId == tvdbidint);
+                if (existsInSonarr)
                 {
                     vm.Approved = true;
 
                     if (vm.SeasonRequests.Any())
                     {
-                        var sonarrEpisodes = _ctx.SonarrEpisodeCache;
+                        // Fetch every cached Sonarr episode for this show in one query, then
+                        // evaluate the TMDB episode list in memory. This removes the per-episode
+                        // EF query pattern that made Discover very expensive for long-running shows.
+                        var sonarrEpisodes = await _ctx.SonarrEpisodeCache
+                            .AsNoTracking()
+                            .Where(x => x.TvDbId == tvdbidint)
+                            .Select(x => new { x.SeasonNumber, x.EpisodeNumber, x.HasFile })
+                            .ToListAsync();
+
+                        var monitoredEpisodes = sonarrEpisodes
+                            .Select(x => (x.SeasonNumber, x.EpisodeNumber))
+                            .ToHashSet();
+                        var episodesWithFiles = sonarrEpisodes
+                            .Where(x => x.HasFile)
+                            .Select(x => (x.SeasonNumber, x.EpisodeNumber))
+                            .ToHashSet();
+
                         foreach (var season in vm.SeasonRequests)
                         {
                             foreach (var ep in season.Episodes)
                             {
-                                // Check if we have it
-                                var monitoredInSonarr = await sonarrEpisodes.FirstOrDefaultAsync(x =>
-                                    x.EpisodeNumber == ep.EpisodeNumber && x.SeasonNumber == season.SeasonNumber
-                                    && x.TvDbId == tvdbidint);
-                                if (monitoredInSonarr != null)
+                                var episodeKey = (season.SeasonNumber, ep.EpisodeNumber);
+                                if (!monitoredEpisodes.Contains(episodeKey))
                                 {
-                                    ep.Approved = true;
-                                    if (monitoredInSonarr.HasFile)
-                                    {
-                                        obj.Available = true;
-                                    }
+                                    continue;
+                                }
+
+                                ep.Approved = true;
+                                if (episodesWithFiles.Contains(episodeKey))
+                                {
+                                    obj.Available = true;
                                 }
                             }
                         }
