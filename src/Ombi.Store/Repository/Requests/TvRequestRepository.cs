@@ -87,6 +87,7 @@ namespace Ombi.Store.Repository.Requests
                 .Include(x => x.ParentRequest)
                 .Include(x => x.SeasonRequests)
                 .ThenInclude(x => x.Episodes)
+                .AsSplitQuery()
                 .AsQueryable();
         }
 
@@ -98,6 +99,7 @@ namespace Ombi.Store.Repository.Requests
                 .Include(x => x.ParentRequest)
                 .Include(x => x.SeasonRequests)
                 .ThenInclude(x => x.Episodes)
+                .AsSplitQuery()
                 .AsQueryable();
         }
 

@@ -732,11 +732,11 @@ namespace Ombi.Core.Engine
             List<ChildRequests> allRequests;
             if (shouldHide.Hide)
             {
-                allRequests = await TvRepository.GetChild(shouldHide.UserId).Include(x => x.SeasonRequests).Where(x => x.ParentRequestId == tvId).ToListAsync();
+                allRequests = await TvRepository.GetChild(shouldHide.UserId).Where(x => x.ParentRequestId == tvId).ToListAsync();
             }
             else
             {
-                allRequests = await TvRepository.GetChild().Include(x => x.SeasonRequests).Where(x => x.ParentRequestId == tvId).ToListAsync();
+                allRequests = await TvRepository.GetChild().Where(x => x.ParentRequestId == tvId).ToListAsync();
             }
 
             await FillAdditionalFields(shouldHide, allRequests);

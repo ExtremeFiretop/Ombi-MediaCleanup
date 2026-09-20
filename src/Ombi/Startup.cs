@@ -277,6 +277,31 @@ namespace Ombi
                 }
             });
 
+            // Only browser navigation requests should reach the SPA fallback.
+            // Unmatched non-GET/HEAD requests otherwise cause SpaDefaultPageMiddleware
+            // to throw a misleading "index.html was not found" exception.
+            app.Use(async (context, next) =>
+            {
+                if (!HttpMethods.IsGet(context.Request.Method) &&
+                    !HttpMethods.IsHead(context.Request.Method))
+                {
+                    var requestPath = $"{context.Request.PathBase}{context.Request.Path}";
+
+                    Log.Warning(
+                        "Unmatched non-SPA request: {Method} {Path} from {RemoteIp}, User-Agent: {UserAgent}, Referer: {Referer}",
+                        context.Request.Method,
+                        requestPath,
+                        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                        context.Request.Headers.UserAgent.ToString(),
+                        context.Request.Headers.Referer.ToString());
+
+                    context.Response.StatusCode = StatusCodes.Status404NotFound;
+                    return;
+                }
+
+                await next();
+            });
+
             app.UseSpa(spa =>
             {
                 spa.Options.SourcePath = "ClientApp";
