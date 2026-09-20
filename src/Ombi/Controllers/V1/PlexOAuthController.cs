@@ -12,6 +12,7 @@ using Ombi.Core.Authentication;
 using Ombi.Core.Settings;
 using Ombi.Core.Settings.Models.External;
 using Ombi.Helpers;
+using Ombi.Models;
 
 namespace Ombi.Controllers.V1
 {
@@ -37,9 +38,9 @@ namespace Ombi.Controllers.V1
         private readonly ILogger _log;
         private readonly OmbiUserManager _userManager;
 
-        [HttpGet("{pollToken}")]
+        [HttpPost]
         [EnableRateLimiting("PlexPinPolling")]
-        public async Task<IActionResult> OAuthWizardCallBack([FromRoute] string pollToken)
+        public async Task<IActionResult> OAuthWizardCallBack([FromBody] PlexOAuthPollRequest request)
         {
             // This endpoint is anonymous purely so the first-run wizard can resolve the Plex PIN and
             // populate the server configuration before any user account exists. Once an administrator
@@ -49,7 +50,12 @@ namespace Ombi.Controllers.V1
                 return Unauthorized();
             }
 
-            var accessToken = await _manager.GetAccessTokenFromPollToken(pollToken);
+            if (request == null || !PlexOAuthPollToken.IsValid(request.PollToken))
+            {
+                return BadRequest(new { error = "Plex OAuth session is missing or invalid" });
+            }
+
+            var accessToken = await _manager.GetAccessTokenFromPollToken(request.PollToken);
             if (accessToken.IsNullOrEmpty())
             {
                 return Json(new

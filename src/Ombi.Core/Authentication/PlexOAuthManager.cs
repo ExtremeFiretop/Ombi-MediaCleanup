@@ -165,7 +165,7 @@ namespace Ombi.Core.Authentication
         private bool TryGetPinSession(string pollToken, out PlexOAuthPinSessionState session)
         {
             session = null;
-            return !string.IsNullOrWhiteSpace(pollToken) &&
+            return PlexOAuthPollToken.IsValid(pollToken) &&
                    _memoryCache.TryGetValue(GetSessionCacheKey(pollToken), out session) &&
                    session != null &&
                    session.PinId > 0 &&
