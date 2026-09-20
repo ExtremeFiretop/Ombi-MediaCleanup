@@ -1,3 +1,7 @@
+## [4.60.49](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.48...v4.60.49) (2026-09-20)
+
+
+
 ## [4.60.48](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.47...v4.60.48) (2026-09-20)
 
 
@@ -208,15 +212,6 @@
 ### Features
 
 * **requests:** add compact view, sorting and user filtering to requests list ([#5424](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5424)) ([4e82fb1](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/4e82fb16e37f15bc684d2da5fa3e43866a7222a6)), closes [#5422](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5422)
-
-
-
-## [4.53.9](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.53.8...v4.53.9) (2026-06-09)
-
-
-### Bug Fixes
-
-* **tv:** materialize TV request search before filtering to avoid EF Core 500 ([#5421](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5421)) ([2f5cdd1](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/2f5cdd160e02f399ba8a63db20e4ac2988291bd5)), closes [#5420](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5420)
 
 
 
