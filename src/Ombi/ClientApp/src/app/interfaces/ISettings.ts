@@ -201,6 +201,7 @@ export interface ICustomizationSettings extends ISettings {
   applicationUrl: string;
   logo: string;
   customCss: string;
+  hideOmbiDonation: boolean;
   enableCustomDonations: boolean;
   customDonationUrl: string;
   customDonationMessage: string;

@@ -104,6 +104,20 @@ export class MyNavComponent implements OnInit {
 
     this.customizationFacade.settings$().subscribe(settings => {
       this.customizationSettings = settings;
+
+      if (this.navItems) {
+        const ombiDonation = this.navItems.find(x => x.id === "nav-adminDonate");
+        if (ombiDonation) {
+          ombiDonation.enabled = !settings.hideOmbiDonation;
+        }
+
+        const customDonation = this.navItems.find(x => x.id === "nav-userDonate");
+        if (customDonation) {
+          customDonation.enabled = settings.enableCustomDonations;
+          customDonation.link = settings.customDonationUrl;
+          customDonation.toolTipMessage = settings.customDonationMessage;
+        }
+      }
     });
 
     this.theme = this.store.get("theme");
@@ -121,7 +135,7 @@ export class MyNavComponent implements OnInit {
       { id: "nav-cleanup", name: "Media Cleanup", icon: "fas fa-broom", link: "/cleanup", requiresAdmin: false, enabled: this.mediaCleanupEnabled },
       { id: "nav-issues", name: "NavigationBar.Issues", icon: "fas fa-exclamation-triangle", link: "/issues", requiresAdmin: false, enabled: this.issuesEnabled },
       { id: "nav-userManagement", name: "NavigationBar.UserManagement", icon: "fas fa-users", link: "/usermanagement", requiresAdmin: true, enabled: true },
-      { id: "nav-adminDonate", name: "NavigationBar.Donate", icon: "fas fa-dollar-sign", link: "https://www.paypal.me/PlexRequestsNet", externalLink: true, requiresAdmin: true, enabled: true, toolTip: true, style: "color:red;", toolTipMessage: 'NavigationBar.DonateTooltip' },
+      { id: "nav-adminDonate", name: "NavigationBar.Donate", icon: "fas fa-dollar-sign", link: "https://www.paypal.me/PlexRequestsNet", externalLink: true, requiresAdmin: true, enabled: !this.customizationSettings.hideOmbiDonation, toolTip: true, style: "color:red;", toolTipMessage: 'NavigationBar.DonateTooltip' },
       { id: "nav-userDonate", name: "NavigationBar.Donate", icon: "fas fa-dollar-sign", link: this.customizationSettings.customDonationUrl, externalLink: true, requiresAdmin: false, enabled: this.customizationSettings.enableCustomDonations, toolTip: true, toolTipMessage: this.customizationSettings.customDonationMessage },
       { id: "nav-featureSuggestion", name: "NavigationBar.FeatureSuggestion", icon: "far fa-lightbulb", link: "https://features.ombi.io/", externalLink: true, requiresAdmin: true, enabled: true, toolTip: true, toolTipMessage: 'NavigationBar.FeatureSuggestionTooltip'},
       { id: "nav-settings", name: "NavigationBar.Settings", icon: "fas fa-cogs", link: "/Settings/About", requiresAdmin: true, enabled: true },

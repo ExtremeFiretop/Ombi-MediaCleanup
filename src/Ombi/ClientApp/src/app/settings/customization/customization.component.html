@@ -48,6 +48,11 @@
             </mat-slide-toggle>
         </div>
         <div class="md-form-field">
+            <mat-slide-toggle data-test="hideOmbiDonation" [(ngModel)]="settings.hideOmbiDonation" matTooltip="Hide the original Ombi developer donation link from the navigation bar">
+                Hide Ombi Developer Donation Link
+            </mat-slide-toggle>
+        </div>
+        <div class="md-form-field">
             <mat-slide-toggle [(ngModel)]="settings.enableCustomDonations" matTooltip="Enable to show a custom donation link in the navigation bar">
                 Enable Custom Donation Link
             </mat-slide-toggle>
