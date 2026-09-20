@@ -1,3 +1,7 @@
+## [4.60.48](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.47...v4.60.48) (2026-09-20)
+
+
+
 ## [4.60.47](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.46...v4.60.47) (2026-09-20)
 
 
@@ -213,10 +217,6 @@
 ### Bug Fixes
 
 * **tv:** materialize TV request search before filtering to avoid EF Core 500 ([#5421](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5421)) ([2f5cdd1](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/2f5cdd160e02f399ba8a63db20e4ac2988291bd5)), closes [#5420](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5420)
-
-
-
-## [4.53.8](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.53.7...v4.53.8) (2026-05-30)
 
 
 
