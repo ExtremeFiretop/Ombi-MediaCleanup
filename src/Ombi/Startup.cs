@@ -100,6 +100,19 @@ namespace Ombi
                             QueueLimit = 0,
                             Window = TimeSpan.FromMinutes(1)
                         }));
+
+                // Plex login polls once per second. Keep the limit comfortably above normal UI
+                // behavior while preventing anonymous clients from hammering arbitrary sessions.
+                options.AddPolicy("PlexPinPolling", httpContext =>
+                    RateLimitPartition.GetFixedWindowLimiter(
+                        partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                        factory: _ => new FixedWindowRateLimiterOptions
+                        {
+                            AutoReplenishment = true,
+                            PermitLimit = 90,
+                            QueueLimit = 0,
+                            Window = TimeSpan.FromMinutes(1)
+                        }));
             });
 
             services.AddJwtAuthentication();

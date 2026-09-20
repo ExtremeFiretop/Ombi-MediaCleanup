@@ -23,8 +23,8 @@ describe('PlexOAuthService', () => {
     mockHttp = mocks.mockHttp;
   });
 
-  it('should GET for oAuth with pin', () => {
-    service.oAuth(12345);
-    expect(mockHttp.get).toHaveBeenCalledWith('/api/v1/PlexOAuth/12345', expect.anything());
+  it('should GET for oAuth with opaque poll token', () => {
+    service.oAuth('opaque-token');
+    expect(mockHttp.get).toHaveBeenCalledWith('/api/v1/PlexOAuth/opaque-token', expect.anything());
   });
 });

@@ -80,19 +80,21 @@ namespace Ombi.Core.Tests.Authentication
 
             var subject = CreateSubject();
 
-            await subject.CreatePin();
-            var token = await subject.GetAccessTokenFromPin(123);
+            var created = await subject.CreatePin();
+            var token = await subject.GetAccessTokenFromPollToken(created.Result.pollToken);
 
+            Assert.That(created.Result.pollToken, Is.Not.Null.And.Not.Empty);
+            Assert.That(created.Result.pollToken.Length, Is.EqualTo(64));
             Assert.AreEqual("auth-token", token);
             _mocker.GetMock<IPlexApi>().Verify(x => x.GetPin(123, "pin-code"), Times.Once);
         }
 
         [Test]
-        public async Task GetAccessTokenFromPin_ReturnsEmpty_WhenPinCodeIsNotCached()
+        public async Task GetAccessTokenFromPollToken_ReturnsEmpty_WhenSessionIsNotCached()
         {
             var subject = CreateSubject();
 
-            var token = await subject.GetAccessTokenFromPin(999);
+            var token = await subject.GetAccessTokenFromPollToken("not-a-real-session");
 
             Assert.That(token, Is.Empty);
             _mocker.GetMock<IPlexApi>().Verify(x => x.GetPin(It.IsAny<int>(), It.IsAny<string>()), Times.Never);
@@ -130,10 +132,10 @@ namespace Ombi.Core.Tests.Authentication
                 .ReturnsAsync(new PlexSettings { InstallId = guid });
 
             var subject = CreateSubject();
-            await subject.CreatePin();
+            var created = await subject.CreatePin();
 
-            Assert.AreEqual("auth-token-2", await subject.GetAccessTokenFromPin(456));
-            Assert.That(await subject.GetAccessTokenFromPin(456), Is.Empty);
+            Assert.AreEqual("auth-token-2", await subject.GetAccessTokenFromPollToken(created.Result.pollToken));
+            Assert.That(await subject.GetAccessTokenFromPollToken(created.Result.pollToken), Is.Empty);
             _mocker.GetMock<IPlexApi>().Verify(x => x.GetPin(456, "one-use-code"), Times.Once);
         }
     }

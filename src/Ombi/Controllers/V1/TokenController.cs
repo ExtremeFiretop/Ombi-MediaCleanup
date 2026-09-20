@@ -70,9 +70,16 @@ namespace Ombi.Controllers.V1
         public async Task<IActionResult> CreatePlexPin()
         {
             var pin = await _plexOAuthManager.CreatePin();
-            if (pin?.Result != null)
+            if (pin?.Result != null && !string.IsNullOrWhiteSpace(pin.Result.pollToken))
             {
-                return Ok(pin.Result);
+                // Do not expose Plex's numeric PIN id or PIN code to the browser. The opaque
+                // poll token is the only handle the client needs for URL creation and polling.
+                return Ok(new
+                {
+                    pollToken = pin.Result.pollToken,
+                    expiresIn = pin.Result.expiresIn,
+                    expiresAt = pin.Result.expiresAt
+                });
             }
 
             if (pin?.Errors?.errors != null)
@@ -129,17 +136,22 @@ namespace Ombi.Controllers.V1
                 // Plex OAuth
                 // Redirect them to Plex
 
+                var pollToken = model.PlexTvPin?.pollToken;
+                if (string.IsNullOrWhiteSpace(pollToken))
+                {
+                    return BadRequest(new { error = "Plex OAuth session is missing or invalid" });
+                }
+
                 var websiteAddress = $"{this.Request.Scheme}://{this.Request.Host}{this.Request.PathBase}";
-                //https://app.plex.tv/auth#?forwardUrl=http://google.com/&clientID=Ombi-Test&context%5Bdevice%5D%5Bproduct%5D=Ombi%20SSO&pinID=798798&code=4lgfd
-                var url = await _plexOAuthManager.GetOAuthUrl(model.PlexTvPin.code, websiteAddress);
+                var url = await _plexOAuthManager.GetOAuthUrl(pollToken, websiteAddress);
                 if (url == null)
                 {
                     return new JsonResult(new
                     {
-                        error = "Application URL has not been set"
+                        error = "Application URL has not been set or the Plex OAuth session has expired"
                     });
                 }
-                return new JsonResult(new { url = url.ToString(), pinId = model.PlexTvPin.id });
+                return new JsonResult(new { url = url.ToString(), pollToken });
             }
 
             _log.LogWarning(string.Format("Failed login attempt by IP: {0}", GetRequestIP()));
@@ -218,11 +230,12 @@ namespace Ombi.Controllers.V1
             });
         }
 
-        [HttpGet("{pinId:int}")]
+        [HttpGet("plexoauth/{pollToken}")]
+        [EnableRateLimiting("PlexPinPolling")]
         [ProducesResponseType(401)]
-        public async Task<IActionResult> OAuth(int pinId)
+        public async Task<IActionResult> OAuth(string pollToken)
         {
-            var accessToken = await _plexOAuthManager.GetAccessTokenFromPin(pinId);
+            var accessToken = await _plexOAuthManager.GetAccessTokenFromPollToken(pollToken);
 
             if (accessToken.IsNullOrEmpty())
             {
