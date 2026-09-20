@@ -252,7 +252,10 @@ namespace Ombi.Core.Senders
                 return new SenderResult { Success = true, Sent = true };
             }
 
-            return new SenderResult { Success = false, Sent = false, Message = "Movie is already monitored" };
+            // Radarr is already in the desired monitored state. Treat this as an idempotent
+            // success so Ombi does not create a false retry-queue entry or failure notification.
+            // Availability remains the responsibility of the normal Radarr availability sync.
+            return new SenderResult { Success = true, Sent = false, Message = "Movie is already monitored" };
         }
 
         private async Task<string> RadarrRootPath(int overrideId, RadarrSettings settings)

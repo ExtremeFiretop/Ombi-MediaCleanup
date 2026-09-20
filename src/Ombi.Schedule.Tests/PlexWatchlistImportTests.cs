@@ -776,18 +776,64 @@ namespace Ombi.Schedule.Tests
         }
 
         [Test]
-        public async Task EmptyWatchlist_DoesNotPurgeExistingHistory()
+        public async Task CompleteEmptyWatchlist_PurgesStaleHistory()
         {
-            // A transient empty response from the community API must not wipe history,
-            // otherwise every title is treated as new next run and re-requested, re-monitoring
-            // and re-grabbing episodes the user has intentionally removed (issue #5427).
+            // A structurally valid, error-free response with no nodes and completed pagination is
+            // an authoritative empty watchlist. Stale history may therefore age out normally.
             UseDefaultPlexSettings();
-            SetupHistory(new PlexWatchlistHistory { TmdbId = "500", UserId = AdminOmbiId });
-            // The default watchlist mock returns zero nodes.
+            SetupHistory(new PlexWatchlistHistory { TmdbId = "500", UserId = AdminOmbiId, LastSeenAt = DateTime.UtcNow.AddDays(-30) });
+            // The default watchlist mock returns an explicit empty nodes collection and pageInfo.
+
+            await _subject.Execute(_context.Object);
+
+            _mocker.Verify<IExternalRepository<PlexWatchlistHistory>>(x => x.Delete(It.Is<PlexWatchlistHistory>(h => h.TmdbId == "500")), Times.Once);
+            _statusStore.Verify(x => x.SetAsync(AdminOmbiId, WatchlistSyncStatus.Successful, It.IsAny<CancellationToken>()), Times.Once);
+        }
+
+        [Test]
+        public async Task MissingWatchlistPayload_DoesNotPurgeStaleHistory()
+        {
+            // A null/malformed payload is not the same thing as a confirmed empty watchlist.
+            UseDefaultPlexSettings();
+            SetupHistory(new PlexWatchlistHistory { TmdbId = "500", UserId = AdminOmbiId, LastSeenAt = DateTime.UtcNow.AddDays(-30) });
+            _mocker.Setup<IPlexApi, Task<PlexCommunityWatchlistResponse>>(x => x.GetWatchlistForUser(AdminToken, AdminUuid, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new PlexCommunityWatchlistResponse
+                {
+                    data = new PlexCommunityWatchlistData { userV2 = new PlexCommunityUserV2 { watchlist = null } }
+                });
 
             await _subject.Execute(_context.Object);
 
             _mocker.Verify<IExternalRepository<PlexWatchlistHistory>>(x => x.Delete(It.IsAny<PlexWatchlistHistory>()), Times.Never);
+            _statusStore.Verify(x => x.SetAsync(AdminOmbiId, WatchlistSyncStatus.Failed, It.IsAny<CancellationToken>()), Times.Once);
+        }
+
+        [Test]
+        public async Task IncompletePagination_DoesNotPurgeStaleHistory()
+        {
+            // hasNextPage without an endCursor means pagination did not complete normally.
+            UseDefaultPlexSettings();
+            SetupHistory(new PlexWatchlistHistory { TmdbId = "500", UserId = AdminOmbiId, LastSeenAt = DateTime.UtcNow.AddDays(-30) });
+            _mocker.Setup<IPlexApi, Task<PlexCommunityWatchlistResponse>>(x => x.GetWatchlistForUser(AdminToken, AdminUuid, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new PlexCommunityWatchlistResponse
+                {
+                    data = new PlexCommunityWatchlistData
+                    {
+                        userV2 = new PlexCommunityUserV2
+                        {
+                            watchlist = new PlexCommunityWatchlist
+                            {
+                                nodes = new List<PlexCommunityWatchlistNode>(),
+                                pageInfo = new PlexCommunityPageInfo { hasNextPage = true, endCursor = null }
+                            }
+                        }
+                    }
+                });
+
+            await _subject.Execute(_context.Object);
+
+            _mocker.Verify<IExternalRepository<PlexWatchlistHistory>>(x => x.Delete(It.IsAny<PlexWatchlistHistory>()), Times.Never);
+            _statusStore.Verify(x => x.SetAsync(AdminOmbiId, WatchlistSyncStatus.Failed, It.IsAny<CancellationToken>()), Times.Once);
         }
 
         [Test]
@@ -800,7 +846,7 @@ namespace Ombi.Schedule.Tests
             SetupWatchlistNodes(AdminUuid, ("movie", "rk-ok"), ("movie", "rk-unresolved"));
             SetupMetadataWithTmdb("rk-ok", "tmdb://77");
             // rk-unresolved has no metadata mock, so it resolves to no provider ids.
-            SetupHistory(new PlexWatchlistHistory { TmdbId = "999", UserId = AdminOmbiId });
+            SetupHistory(new PlexWatchlistHistory { TmdbId = "999", UserId = AdminOmbiId, LastSeenAt = DateTime.UtcNow.AddDays(-30) });
 
             _mocker.Setup<IMovieRequestEngine, Task<RequestEngineResult>>(x => x.RequestMovie(It.IsAny<MovieRequestViewModel>()))
                 .ReturnsAsync(new RequestEngineResult { Result = true });

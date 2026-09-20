@@ -43,7 +43,7 @@ namespace Ombi.Schedule.Jobs.Ombi
             {
                 if (request.Type == RequestType.Movie)
                 {
-                    var movieRequest = await _movieRequestRepository.GetAll().FirstOrDefaultAsync(x => x.Id == request.RequestId);
+                    var movieRequest = await _movieRequestRepository.GetWithUser().FirstOrDefaultAsync(x => x.Id == request.RequestId);
                     if (movieRequest == null)
                     {
                         await _requestQueue.Delete(request);
