@@ -1,3 +1,7 @@
+## [4.60.44](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.43...v4.60.44) (2026-09-20)
+
+
+
 ## [4.60.43](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.42...v4.60.43) (2026-09-20)
 
 
@@ -235,10 +239,6 @@
 ### Bug Fixes
 
 * **http:** enable automatic decompression on OmbiClient ([#5410](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5410)) ([a002528](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/a0025284926ebe41ca9ed730216969396f4978bc))
-
-
-
-## [4.59.4](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.59.3...v4.59.4) (2026-05-14)
 
 
 
