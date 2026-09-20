@@ -218,6 +218,8 @@ namespace Ombi.Core.Engine.V2
             return results;
         }
 
+        private const int MaxConcurrentTmdbEnrichmentRequests = 4;
+
         private async Task<IEnumerable<SearchTvShowViewModel>> ProcessResults(List<MovieDbSearchResult> items)
         {
             var settings = await _customization.GetSettingsAsync();
@@ -229,25 +231,13 @@ namespace Ombi.Core.Engine.V2
 
             if (settings.HideAvailableFromDiscover)
             {
-                foreach (var tvMazeSearch in nonDemoItems)
-                {
-                    var show = await Cache.GetOrAddAsync(nameof(GetShowInformation) + tvMazeSearch.Id.ToString(),
-                        () => _movieApi.GetTVInfo(tvMazeSearch.Id.ToString()), DateTime.Now.AddHours(12));
-
-                    if (show == null || string.IsNullOrEmpty(show.name) || show.seasons == null)
-                    {
-                        continue;
-                    }
-
-                    var seasons = show.seasons.Where(x => x.season_number != 0).ToList();
-                    foreach (var tvSeason in seasons)
-                    {
-                        var seasonEpisodes = await Cache.GetOrAddAsync("SeasonEpisodes" + show.id + tvSeason.season_number,
-                            () => _movieApi.GetSeasonEpisodes(show.id, tvSeason.season_number, CancellationToken.None),
-                            DateTimeOffset.Now.AddHours(12));
-                        MapSeasons(tvMazeSearch.SeasonRequests, tvSeason, seasonEpisodes);
-                    }
-                }
+                // Availability enrichment can require one TMDB show request plus a request for every season.
+                // Populate the existing in-memory cache concurrently, but bound the number of cold-cache
+                // TMDB requests so a Discover page cannot flood the upstream API. Cache lifetime/keys remain
+                // unchanged, so an Ombi restart still starts with a fresh enrichment cache.
+                using var tmdbRequestLimiter = new SemaphoreSlim(MaxConcurrentTmdbEnrichmentRequests);
+                var enrichmentTasks = nonDemoItems.Select(item => EnrichAvailabilityData(item, tmdbRequestLimiter));
+                await Task.WhenAll(enrichmentTasks);
             }
 
             // Run ProcessResult sequentially (RunSearchRules accesses DbContext which is not thread-safe)
@@ -263,6 +253,59 @@ namespace Ombi.Core.Engine.V2
             }
 
             return retVal;
+        }
+
+        private async Task EnrichAvailabilityData(MovieDbSearchResult tvSearchResult, SemaphoreSlim tmdbRequestLimiter)
+        {
+            var show = await Cache.GetOrAddAsync(nameof(GetShowInformation) + tvSearchResult.Id.ToString(),
+                async () =>
+                {
+                    await tmdbRequestLimiter.WaitAsync();
+                    try
+                    {
+                        return await _movieApi.GetTVInfo(tvSearchResult.Id.ToString());
+                    }
+                    finally
+                    {
+                        tmdbRequestLimiter.Release();
+                    }
+                }, DateTime.Now.AddHours(12));
+
+            if (show == null || string.IsNullOrEmpty(show.name) || show.seasons == null)
+            {
+                return;
+            }
+
+            var seasons = show.seasons.Where(x => x.season_number != 0).ToList();
+            var seasonTasks = seasons.Select(async tvSeason =>
+            {
+                var seasonEpisodes = await Cache.GetOrAddAsync("SeasonEpisodes" + show.id + tvSeason.season_number,
+                    async () =>
+                    {
+                        await tmdbRequestLimiter.WaitAsync();
+                        try
+                        {
+                            return await _movieApi.GetSeasonEpisodes(show.id, tvSeason.season_number, CancellationToken.None);
+                        }
+                        finally
+                        {
+                            tmdbRequestLimiter.Release();
+                        }
+                    }, DateTimeOffset.Now.AddHours(12));
+
+                return (Season: tvSeason, Episodes: seasonEpisodes);
+            });
+
+            var seasonResults = await Task.WhenAll(seasonTasks);
+            foreach (var seasonResult in seasonResults)
+            {
+                if (seasonResult.Episodes?.episodes == null)
+                {
+                    continue;
+                }
+
+                MapSeasons(tvSearchResult.SeasonRequests, seasonResult.Season, seasonResult.Episodes);
+            }
         }
 
         private static void MapSeasons(List<SeasonRequests> seasonRequests, Season tvSeason, SeasonDetails seasonEpisodes)
