@@ -21,7 +21,7 @@ export class AuthService extends ServiceHelpers {
     }
 
     public oAuth(pollToken: string): Observable<any> {
-        return this.http.get<any>(`${this.url}/plexoauth/${encodeURIComponent(pollToken)}`, { headers: this.headers });
+        return this.http.post<any>(`${this.url}/plexoauth`, { pollToken }, { headers: this.headers });
     }
 
     public requiresPassword(login: IUserLogin): Observable<boolean> {

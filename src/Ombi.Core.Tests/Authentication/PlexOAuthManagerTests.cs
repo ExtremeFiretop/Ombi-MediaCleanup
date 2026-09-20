@@ -94,10 +94,20 @@ namespace Ombi.Core.Tests.Authentication
         {
             var subject = CreateSubject();
 
-            var token = await subject.GetAccessTokenFromPollToken("not-a-real-session");
+            var token = await subject.GetAccessTokenFromPollToken(new string('a', PlexOAuthPollToken.Length));
 
             Assert.That(token, Is.Empty);
             _mocker.GetMock<IPlexApi>().Verify(x => x.GetPin(It.IsAny<int>(), It.IsAny<string>()), Times.Never);
+        }
+
+        [Test]
+        public void PollTokenValidation_RequiresExactly64LowercaseHexCharacters()
+        {
+            Assert.That(PlexOAuthPollToken.IsValid(new string('a', PlexOAuthPollToken.Length)), Is.True);
+            Assert.That(PlexOAuthPollToken.IsValid(new string('A', PlexOAuthPollToken.Length)), Is.False);
+            Assert.That(PlexOAuthPollToken.IsValid(new string('a', PlexOAuthPollToken.Length - 1)), Is.False);
+            Assert.That(PlexOAuthPollToken.IsValid(new string('g', PlexOAuthPollToken.Length)), Is.False);
+            Assert.That(PlexOAuthPollToken.IsValid(null), Is.False);
         }
 
         [Test]

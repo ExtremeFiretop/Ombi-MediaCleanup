@@ -231,12 +231,18 @@ namespace Ombi.Controllers.V1
             });
         }
 
-        [HttpGet("plexoauth/{pollToken}")]
+        [HttpPost("plexoauth")]
         [EnableRateLimiting("PlexPinPolling")]
+        [ProducesResponseType(400)]
         [ProducesResponseType(401)]
-        public async Task<IActionResult> OAuth(string pollToken)
+        public async Task<IActionResult> OAuth([FromBody] PlexOAuthPollRequest request)
         {
-            var accessToken = await _plexOAuthManager.GetAccessTokenFromPollToken(pollToken);
+            if (request == null || !PlexOAuthPollToken.IsValid(request.PollToken))
+            {
+                return BadRequest(new { errorMessage = "Plex OAuth session is missing or invalid" });
+            }
+
+            var accessToken = await _plexOAuthManager.GetAccessTokenFromPollToken(request.PollToken);
             if (accessToken.IsNullOrEmpty())
             {
                 return PlexOAuthError("Could not authenticate with Plex");

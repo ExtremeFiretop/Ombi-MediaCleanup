@@ -10,6 +10,7 @@ using Ombi.Core.Authentication;
 using Ombi.Core.Settings;
 using Ombi.Core.Settings.Models.External;
 using Ombi.Helpers;
+using Ombi.Models;
 using Ombi.Store.Entities;
 using Ombi.Test.Common;
 
@@ -23,6 +24,7 @@ namespace Ombi.Tests
         private Mock<ISettingsService<PlexSettings>> _plexSettings;
         private Mock<OmbiUserManager> _userManager;
         private PlexOAuthController _subject;
+        private const string ValidPollToken = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
         [SetUp]
         public void Setup()
@@ -51,7 +53,7 @@ namespace Ombi.Tests
             // the wizard is finished, so it must return without reading or overwriting the Plex config.
             SetAdminExists(true);
 
-            var result = await _subject.OAuthWizardCallBack("opaque-token");
+            var result = await _subject.OAuthWizardCallBack(new PlexOAuthPollRequest { PollToken = ValidPollToken });
 
             Assert.That(result, Is.InstanceOf<UnauthorizedResult>());
             _oAuthManager.Verify(x => x.GetAccessTokenFromPollToken(It.IsAny<string>()), Times.Never);
@@ -65,12 +67,23 @@ namespace Ombi.Tests
             // endpoint. Returning an empty token makes the action bail out immediately AFTER the admin
             // guard, proving the request was allowed through.
             SetAdminExists(false);
-            _oAuthManager.Setup(x => x.GetAccessTokenFromPollToken("opaque-token")).ReturnsAsync(string.Empty);
+            _oAuthManager.Setup(x => x.GetAccessTokenFromPollToken(ValidPollToken)).ReturnsAsync(string.Empty);
 
-            var result = await _subject.OAuthWizardCallBack("opaque-token");
+            var result = await _subject.OAuthWizardCallBack(new PlexOAuthPollRequest { PollToken = ValidPollToken });
 
-            _oAuthManager.Verify(x => x.GetAccessTokenFromPollToken("opaque-token"), Times.Once);
+            _oAuthManager.Verify(x => x.GetAccessTokenFromPollToken(ValidPollToken), Times.Once);
             Assert.That(result, Is.InstanceOf<JsonResult>());
+        }
+
+        [Test]
+        public async Task OAuthWizardCallBack_ReturnsBadRequest_WhenPollTokenFormatIsInvalid()
+        {
+            SetAdminExists(false);
+
+            var result = await _subject.OAuthWizardCallBack(new PlexOAuthPollRequest { PollToken = "not-a-valid-token" });
+
+            Assert.That(result, Is.InstanceOf<BadRequestObjectResult>());
+            _oAuthManager.Verify(x => x.GetAccessTokenFromPollToken(It.IsAny<string>()), Times.Never);
         }
     }
 }
