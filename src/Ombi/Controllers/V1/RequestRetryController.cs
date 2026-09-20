@@ -56,6 +56,13 @@ namespace Ombi.Controllers.V1
                 if (f.Type == RequestType.Movie)
                 {
                     var request = await _movieRequestRepository.Find(f.RequestId);
+                    if (request == null)
+                    {
+                        // The request may have been deleted while an old retry row still exists.
+                        // Do not let one stale queue entry break the entire Failed Requests page;
+                        // ResendFailedRequests will remove orphaned queue rows on its next run.
+                        continue;
+                    }
                     vmModel.Title = request.Title;
                     vmModel.ReleaseYear = request.ReleaseDate;
                 }
@@ -63,6 +70,10 @@ namespace Ombi.Controllers.V1
                 if (f.Type == RequestType.Album)
                 {
                     var request = await _musicRequestRepository.Find(f.RequestId);
+                    if (request == null)
+                    {
+                        continue;
+                    }
                     vmModel.Title = request.Title;
                     vmModel.ReleaseYear = request.ReleaseDate;
                 }
@@ -70,6 +81,10 @@ namespace Ombi.Controllers.V1
                 if (f.Type == RequestType.TvShow)
                 {
                     var request = await _tvRequestRepository.GetChild().Include(x => x.ParentRequest).FirstOrDefaultAsync(x => x.Id == f.RequestId);
+                    if (request?.ParentRequest == null)
+                    {
+                        continue;
+                    }
                     vmModel.Title = request.Title;
                     vmModel.ReleaseYear = request.ParentRequest.ReleaseDate;
                 }

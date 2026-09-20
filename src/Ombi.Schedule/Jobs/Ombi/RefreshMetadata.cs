@@ -299,13 +299,25 @@ namespace Ombi.Schedule.Jobs.Ombi
                         _log.LogDebug(e, $"Could not find the metadata for title: '{movie.Title}', skipping");
                         continue;
                     }
-                    var guids = new List<string>();
+                    var meta = metaData?.MediaContainer?.Metadata?.FirstOrDefault();
+                    if (meta == null)
+                    {
+                        // Plex can return 404/default for a stale rating key. The API wrapper
+                        // already logs the failed request; avoid turning that into a second
+                        // NullReferenceException that aborts the entire metadata refresh job.
+                        _log.LogDebug("Plex returned no metadata for title '{Title}' (key {Key}); skipping this item",
+                            movie.Title, movie.Key);
+                        continue;
+                    }
 
-                    var meta = metaData.MediaContainer.Metadata.FirstOrDefault();
-                    guids.Add(meta.guid);
+                    var guids = new List<string>();
+                    if (!string.IsNullOrWhiteSpace(meta.guid))
+                    {
+                        guids.Add(meta.guid);
+                    }
                     if (meta.Guid != null)
                     {
-                        foreach (var g in meta.Guid)
+                        foreach (var g in meta.Guid.Where(x => !string.IsNullOrWhiteSpace(x?.Id)))
                         {
                             guids.Add(g.Id);
                         }

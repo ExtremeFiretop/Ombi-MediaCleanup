@@ -34,6 +34,13 @@ namespace Ombi.Core.Helpers
         public async Task<TvShowRequestBuilderV2> GetShowInfo(int id, string langCode = "en")
         {
             TheMovieDbRecord = await MovieDbApi.GetTVInfo(id.ToString(), langCode);
+            if (TheMovieDbRecord == null)
+            {
+                // The API layer returns null/default for transient TMDB failures (for example a
+                // 500 response). Let the request engine report a normal request error instead of
+                // throwing a NullReferenceException and aborting callers such as watchlist import.
+                return null;
+            }
 
             // Sonarr requires a TVDB ID. TMDB's appended external_ids payload can occasionally
             // be absent/incomplete even though the dedicated external_ids endpoint has the mapping.
@@ -56,6 +63,7 @@ namespace Ombi.Core.Helpers
             }
 
             // Remove 'Specials Season'
+            TheMovieDbRecord.seasons ??= new List<Season>();
             var firstSeason = TheMovieDbRecord.seasons.OrderBy(x => x.season_number).FirstOrDefault();
             if (firstSeason?.season_number == 0)
             {

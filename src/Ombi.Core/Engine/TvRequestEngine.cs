@@ -315,8 +315,18 @@ namespace Ombi.Core.Engine
             }
 
             var tvBuilder = new TvShowRequestBuilderV2(MovieDbApi);
-            (await tvBuilder
-                .GetShowInfo(tv.TheMovieDbId, tv.languageCode))
+            var showBuilder = await tvBuilder.GetShowInfo(tv.TheMovieDbId, tv.languageCode);
+            if (showBuilder == null)
+            {
+                return new RequestEngineResult
+                {
+                    Result = false,
+                    Message = "TheMovieDb could not return TV show information. Please try again later.",
+                    ErrorMessage = "TheMovieDb could not return TV show information. Please try again later."
+                };
+            }
+
+            showBuilder
                 .CreateTvList(tv)
                 .CreateChild(tv, canRequestOnBehalf ? tv.RequestOnBehalf : user.Id, tv.Source);
 
