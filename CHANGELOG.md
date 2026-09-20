@@ -1,3 +1,7 @@
+## [4.60.46](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.45...v4.60.46) (2026-09-20)
+
+
+
 ## [4.60.45](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.44...v4.60.45) (2026-09-20)
 
 
@@ -213,27 +217,6 @@
 
 
 ## [4.53.7](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.53.6...v4.53.7) (2026-05-30)
-
-
-
-## [4.53.6](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.59.5...v4.53.6) (2026-05-20)
-
-
-
-## [4.53.5](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.59.0...v4.53.5) (2026-04-20)
-
-
-### Bug Fixes
-
-* reset sqlite_sequence after cache table deletes to prevent Int32 overflow ([#5398](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5398)) ([02e7c8e](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/02e7c8e3c013b9c4620c381e143ecbded25f694d)), closes [#5224](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5224)
-
-
-
-## [4.53.4](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.54.0...v4.53.4) (2026-01-08)
-
-
-
-## [4.47.1](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.47.0...v4.47.1) (2025-01-05)
 
 
 
