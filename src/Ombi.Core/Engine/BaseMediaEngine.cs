@@ -71,7 +71,9 @@ namespace Ombi.Core.Engine
             var now = DateTime.Now.Ticks;
             if (_dbTv == null || now - _cacheTime > CacheExpiryTicks)
             {
-                var allResults = await TvRepository.Get().ToListAsync();
+                var allResults = await TvRepository.Get()
+                    .AsSplitQuery()
+                    .ToListAsync();
 
                 var distinctResults = allResults.DistinctBy(x => x.ExternalProviderId);
                 _dbTv = distinctResults.ToDictionary(x => x.ExternalProviderId);
