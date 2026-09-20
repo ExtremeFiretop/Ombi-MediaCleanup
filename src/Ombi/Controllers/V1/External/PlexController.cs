@@ -272,9 +272,9 @@ namespace Ombi.Controllers.V1.External
         {
             var vm = new List<UsersViewModel>();
             var s = await PlexSettings.GetSettingsAsync();
-            foreach (var server in s.Servers)
+            foreach (var plexAuthToken in s.Servers.Select(server => server.PlexAuthToken))
             {
-                var users = await PlexApi.GetUsers(server.PlexAuthToken);
+                var users = await PlexApi.GetUsers(plexAuthToken);
                 if (users?.User != null && users.User.Any())
                 {
                     vm.AddRange(users.User.Select(u => new UsersViewModel
@@ -291,7 +291,7 @@ namespace Ombi.Controllers.V1.External
                 // Import". BannedPlexUserIds is keyed by this numeric plex.tv account id.
                 try
                 {
-                    var account = await PlexApi.GetAccount(server.PlexAuthToken);
+                    var account = await PlexApi.GetAccount(plexAuthToken);
                     if (account?.user != null && !string.IsNullOrWhiteSpace(account.user.id))
                     {
                         vm.Add(new UsersViewModel
