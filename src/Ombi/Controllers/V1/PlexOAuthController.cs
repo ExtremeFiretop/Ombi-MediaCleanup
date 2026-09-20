@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Logging;
 using Ombi.Api.External.MediaServers.Plex;
 using Ombi.Api.External.MediaServers.Plex.Models.Server;
@@ -36,8 +37,9 @@ namespace Ombi.Controllers.V1
         private readonly ILogger _log;
         private readonly OmbiUserManager _userManager;
 
-        [HttpGet("{pinId:int}")]
-        public async Task<IActionResult> OAuthWizardCallBack([FromRoute] int pinId)
+        [HttpGet("{pollToken}")]
+        [EnableRateLimiting("PlexPinPolling")]
+        public async Task<IActionResult> OAuthWizardCallBack([FromRoute] string pollToken)
         {
             // This endpoint is anonymous purely so the first-run wizard can resolve the Plex PIN and
             // populate the server configuration before any user account exists. Once an administrator
@@ -47,7 +49,7 @@ namespace Ombi.Controllers.V1
                 return Unauthorized();
             }
 
-            var accessToken = await _manager.GetAccessTokenFromPin(pinId);
+            var accessToken = await _manager.GetAccessTokenFromPollToken(pollToken);
             if (accessToken.IsNullOrEmpty())
             {
                 return Json(new

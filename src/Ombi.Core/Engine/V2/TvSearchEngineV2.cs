@@ -219,6 +219,7 @@ namespace Ombi.Core.Engine.V2
         }
 
         private const int MaxConcurrentTmdbEnrichmentRequests = 4;
+        private static readonly SemaphoreSlim TmdbEnrichmentLimiter = new(MaxConcurrentTmdbEnrichmentRequests, MaxConcurrentTmdbEnrichmentRequests);
 
         private async Task<IEnumerable<SearchTvShowViewModel>> ProcessResults(List<MovieDbSearchResult> items)
         {
@@ -235,8 +236,7 @@ namespace Ombi.Core.Engine.V2
                 // Populate the existing in-memory cache concurrently, but bound the number of cold-cache
                 // TMDB requests so a Discover page cannot flood the upstream API. Cache lifetime/keys remain
                 // unchanged, so an Ombi restart still starts with a fresh enrichment cache.
-                using var tmdbRequestLimiter = new SemaphoreSlim(MaxConcurrentTmdbEnrichmentRequests);
-                var enrichmentTasks = nonDemoItems.Select(item => EnrichAvailabilityData(item, tmdbRequestLimiter));
+                var enrichmentTasks = nonDemoItems.Select(EnrichAvailabilityData);
                 await Task.WhenAll(enrichmentTasks);
             }
 
@@ -255,19 +255,19 @@ namespace Ombi.Core.Engine.V2
             return retVal;
         }
 
-        private async Task EnrichAvailabilityData(MovieDbSearchResult tvSearchResult, SemaphoreSlim tmdbRequestLimiter)
+        private async Task EnrichAvailabilityData(MovieDbSearchResult tvSearchResult)
         {
             var show = await Cache.GetOrAddAsync(nameof(GetShowInformation) + tvSearchResult.Id.ToString(),
                 async () =>
                 {
-                    await tmdbRequestLimiter.WaitAsync();
+                    await TmdbEnrichmentLimiter.WaitAsync();
                     try
                     {
                         return await _movieApi.GetTVInfo(tvSearchResult.Id.ToString());
                     }
                     finally
                     {
-                        tmdbRequestLimiter.Release();
+                        TmdbEnrichmentLimiter.Release();
                     }
                 }, DateTime.Now.AddHours(12));
 
@@ -282,14 +282,14 @@ namespace Ombi.Core.Engine.V2
                 var seasonEpisodes = await Cache.GetOrAddAsync("SeasonEpisodes" + show.id + tvSeason.season_number,
                     async () =>
                     {
-                        await tmdbRequestLimiter.WaitAsync();
+                        await TmdbEnrichmentLimiter.WaitAsync();
                         try
                         {
                             return await _movieApi.GetSeasonEpisodes(show.id, tvSeason.season_number, CancellationToken.None);
                         }
                         finally
                         {
-                            tmdbRequestLimiter.Release();
+                            TmdbEnrichmentLimiter.Release();
                         }
                     }, DateTimeOffset.Now.AddHours(12));
 

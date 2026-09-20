@@ -77,7 +77,7 @@ namespace Ombi.Core.Models.MediaCleanup
         public string Title { get; set; }
         public DateTime? AirDateUtc { get; set; }
         public bool HasFile { get; set; }
-        public int EpisodeFileId { get; set; }
+        public int FileGroupId { get; set; }
         public long SizeOnDisk { get; set; }
     }
 

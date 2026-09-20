@@ -1,6 +1,7 @@
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Ombi.Core.Engine.Interfaces;
 using Ombi.Core.Models.MediaCleanup;
 using Ombi.Settings.Settings.Models;
@@ -22,6 +23,7 @@ namespace Ombi.Controllers.V1
         }
 
         [HttpGet]
+        [EnableRateLimiting("MediaCleanupOverviewRead")]
         public Task<MediaCleanupOverview> GetOverview(
             [FromQuery] RequestType? requestType = null,
             [FromQuery] int? requestId = null,
@@ -33,6 +35,7 @@ namespace Ombi.Controllers.V1
         }
 
         [HttpGet("tv/{requestId:int}/episodes")]
+        [EnableRateLimiting("MediaCleanupTvSelectionRead")]
         public Task<MediaCleanupTvSelectionViewModel> GetTvSelection(int requestId)
         {
             return _engine.GetTvSelection(requestId);

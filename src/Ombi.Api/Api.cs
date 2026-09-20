@@ -258,13 +258,13 @@ namespace Ombi.Api
                         Logger.LogWarning(LoggingEvents.Api,
                             outcome.Exception,
                             "Retrying RequestUri: {RequestUri} in {DelaySeconds} seconds because of a transient HTTP error",
-                            request.FullUri, delay.TotalSeconds);
+                            SafeUriForLogging(request.FullUri), delay.TotalSeconds);
                         return;
                     }
 
                     Logger.LogWarning(LoggingEvents.Api,
                         "Retrying RequestUri: {RequestUri} in {DelaySeconds} seconds because we got Status Code: {StatusCode}",
-                        request.FullUri, delay.TotalSeconds, outcome.Result?.StatusCode);
+                        SafeUriForLogging(request.FullUri), delay.TotalSeconds, outcome.Result?.StatusCode);
                 });
 
             return await retryPolicy.ExecuteAsync(() => SendWithDnsRetryAsync(template, cancellationToken));
@@ -292,6 +292,11 @@ namespace Ombi.Api
                     }
                 }
             }
+        }
+
+        private static string SafeUriForLogging(Uri uri)
+        {
+            return uri?.GetLeftPart(UriPartial.Path) ?? string.Empty;
         }
 
         private static bool IsDnsResolutionFailure(HttpRequestException exception)

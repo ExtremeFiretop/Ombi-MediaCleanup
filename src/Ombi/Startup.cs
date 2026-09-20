@@ -87,6 +87,17 @@ namespace Ombi
             services.AddLazyCache();
             services.AddHttpClient();
 
+            string AuthenticatedUserOrIpPartition(HttpContext httpContext)
+            {
+                var userId = httpContext.User?.FindFirst("Id")?.Value;
+                if (!string.IsNullOrWhiteSpace(userId))
+                {
+                    return $"user:{userId}";
+                }
+
+                return $"ip:{httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown"}";
+            }
+
             services.AddRateLimiter(options =>
             {
                 options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -97,6 +108,44 @@ namespace Ombi
                         {
                             AutoReplenishment = true,
                             PermitLimit = 10,
+                            QueueLimit = 0,
+                            Window = TimeSpan.FromMinutes(1)
+                        }));
+
+                // Plex login polls once per second. Keep the limit comfortably above normal UI
+                // behavior while preventing anonymous clients from hammering arbitrary sessions.
+                options.AddPolicy("PlexPinPolling", httpContext =>
+                    RateLimitPartition.GetFixedWindowLimiter(
+                        partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                        factory: _ => new FixedWindowRateLimiterOptions
+                        {
+                            AutoReplenishment = true,
+                            PermitLimit = 90,
+                            QueueLimit = 0,
+                            Window = TimeSpan.FromMinutes(1)
+                        }));
+
+                // These endpoints can fan out to request storage, Sonarr/Radarr and Plex. Partition
+                // by authenticated Ombi user when available, with the forwarded client IP as a
+                // fallback for malformed/unauthenticated requests.
+                options.AddPolicy("MediaCleanupOverviewRead", httpContext =>
+                    RateLimitPartition.GetFixedWindowLimiter(
+                        partitionKey: AuthenticatedUserOrIpPartition(httpContext),
+                        factory: _ => new FixedWindowRateLimiterOptions
+                        {
+                            AutoReplenishment = true,
+                            PermitLimit = 30,
+                            QueueLimit = 0,
+                            Window = TimeSpan.FromMinutes(1)
+                        }));
+
+                options.AddPolicy("MediaCleanupTvSelectionRead", httpContext =>
+                    RateLimitPartition.GetFixedWindowLimiter(
+                        partitionKey: AuthenticatedUserOrIpPartition(httpContext),
+                        factory: _ => new FixedWindowRateLimiterOptions
+                        {
+                            AutoReplenishment = true,
+                            PermitLimit = 20,
                             QueueLimit = 0,
                             Window = TimeSpan.FromMinutes(1)
                         }));
@@ -187,9 +236,11 @@ namespace Ombi
             app.UseMiddleware<ErrorHandlingMiddleware>();
             app.UseMiddleware<ApiKeyMiddlewear>();
             app.UseRouting();
+            // Authentication must run before endpoint rate limiting so authenticated policies can
+            // partition by Ombi user id. Anonymous policies still fall back to the client IP.
+            app.UseAuthentication();
             app.UseRateLimiter();
 
-            app.UseAuthentication();
             app.UseMiddleware<UserActivityMiddleware>();
             app.UseAuthorization();
 

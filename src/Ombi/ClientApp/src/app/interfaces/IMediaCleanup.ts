@@ -137,7 +137,7 @@ export interface IMediaCleanupTvEpisode {
     title: string;
     airDateUtc?: Date;
     hasFile: boolean;
-    episodeFileId: number;
+    fileGroupId: number;
     sizeOnDisk: number;
 }
 

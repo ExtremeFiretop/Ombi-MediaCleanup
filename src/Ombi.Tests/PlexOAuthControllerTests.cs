@@ -51,10 +51,10 @@ namespace Ombi.Tests
             // the wizard is finished, so it must return without reading or overwriting the Plex config.
             SetAdminExists(true);
 
-            var result = await _subject.OAuthWizardCallBack(1234);
+            var result = await _subject.OAuthWizardCallBack("opaque-token");
 
             Assert.That(result, Is.InstanceOf<UnauthorizedResult>());
-            _oAuthManager.Verify(x => x.GetAccessTokenFromPin(It.IsAny<int>()), Times.Never);
+            _oAuthManager.Verify(x => x.GetAccessTokenFromPollToken(It.IsAny<string>()), Times.Never);
             _plexSettings.Verify(x => x.SaveSettingsAsync(It.IsAny<PlexSettings>()), Times.Never);
         }
 
@@ -65,11 +65,11 @@ namespace Ombi.Tests
             // endpoint. Returning an empty token makes the action bail out immediately AFTER the admin
             // guard, proving the request was allowed through.
             SetAdminExists(false);
-            _oAuthManager.Setup(x => x.GetAccessTokenFromPin(1234)).ReturnsAsync(string.Empty);
+            _oAuthManager.Setup(x => x.GetAccessTokenFromPollToken("opaque-token")).ReturnsAsync(string.Empty);
 
-            var result = await _subject.OAuthWizardCallBack(1234);
+            var result = await _subject.OAuthWizardCallBack("opaque-token");
 
-            _oAuthManager.Verify(x => x.GetAccessTokenFromPin(1234), Times.Once);
+            _oAuthManager.Verify(x => x.GetAccessTokenFromPollToken("opaque-token"), Times.Once);
             Assert.That(result, Is.InstanceOf<JsonResult>());
         }
     }

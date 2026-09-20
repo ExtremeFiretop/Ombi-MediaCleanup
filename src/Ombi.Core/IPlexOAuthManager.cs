@@ -8,9 +8,9 @@ namespace Ombi.Core.Authentication
     public interface IPlexOAuthManager
     {
         Task<OAuthContainer> CreatePin();
-        Task<string> GetAccessTokenFromPin(int pinId);
-        Task<Uri> GetOAuthUrl(string code, string websiteAddress = null);
-        Task<Uri> GetWizardOAuthUrl(string code, string websiteAddress);
+        Task<string> GetAccessTokenFromPollToken(string pollToken);
+        Task<Uri> GetOAuthUrl(string pollToken, string websiteAddress = null);
+        Task<Uri> GetWizardOAuthUrl(string pollToken, string websiteAddress);
         Task<PlexAccount> GetAccount(string accessToken);
     }
 }

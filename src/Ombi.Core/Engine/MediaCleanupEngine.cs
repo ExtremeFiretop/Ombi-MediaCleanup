@@ -129,6 +129,23 @@ namespace Ombi.Core.Engine
             }
 
             var permissions = await GetPermissions(user);
+            var result = new MediaCleanupOverview
+            {
+                Settings = settings,
+                CanRequestRemoval = permissions.CanRequestRemoval,
+                CanDeleteOwnMedia = permissions.CanDeleteOwnMedia,
+                CanVote = permissions.CanVote,
+                CanManage = permissions.CanManage
+            };
+
+            // Do not fan out to the request database, Radarr/Sonarr or Plex when Media Cleanup is
+            // disabled or the caller cannot use it. This endpoint is public to authenticated users,
+            // so the cheap authorization checks must happen before any expensive catalog work.
+            if (!settings.Enabled || (!permissions.CanRequestRemoval && !permissions.CanVote && !permissions.CanManage))
+            {
+                return result;
+            }
+
             var state = await LoadState();
             var activeRecords = state.Requests
                 .Where(IsActive)
@@ -164,15 +181,6 @@ namespace Ombi.Core.Engine
                     voterDisplayNames = new Dictionary<string, string>();
                 }
             }
-
-            var result = new MediaCleanupOverview
-            {
-                Settings = settings,
-                CanRequestRemoval = permissions.CanRequestRemoval,
-                CanDeleteOwnMedia = permissions.CanDeleteOwnMedia,
-                CanVote = permissions.CanVote,
-                CanManage = permissions.CanManage
-            };
 
             var includeMovies = !requestType.HasValue || requestType == RequestType.Movie;
             var includeTv = !requestType.HasValue || requestType == RequestType.TvShow;
@@ -603,6 +611,11 @@ namespace Ombi.Core.Engine
         public async Task<MediaCleanupTvSelectionViewModel> GetTvSelection(int requestId)
         {
             var settings = await _settings.GetSettingsAsync();
+            if (!settings.Enabled)
+            {
+                return new MediaCleanupTvSelectionViewModel { Result = false, Message = "Media Cleanup is disabled." };
+            }
+
             var user = await _currentUser.GetUser();
             if (user == null)
             {
@@ -615,17 +628,60 @@ namespace Ombi.Core.Engine
                 return new MediaCleanupTvSelectionViewModel { Result = false, Message = "You do not have permission to use Media Cleanup." };
             }
 
+            // Use the same visibility decision as the overview before contacting Sonarr. Knowing an
+            // Ombi request id must not be enough to enumerate another user's episode/file metadata.
+            var state = await LoadState();
+            var activeRecords = state.Requests.Where(IsActive).ToList();
             var tv = await _tvRequests.Get().FirstOrDefaultAsync(x => x.Id == requestId);
             MediaCleanupRecord residualRecord = null;
+            MediaCleanupRecord cleanup;
+            bool owned;
             var usableRequest = tv != null && tv.ChildRequests != null && tv.ChildRequests.Any() && tv.ChildRequests.All(x => x.Available);
-            if (!usableRequest)
+
+            if (usableRequest)
             {
-                var state = await LoadState();
+                cleanup = FindActiveForMedia(
+                    activeRecords,
+                    RequestType.TvShow,
+                    tv.Id,
+                    tv.ExternalProviderId,
+                    tv.TvDbId);
+                var owners = tv.ChildRequests
+                    .Select(x => x.RequestedUserId)
+                    .Where(x => !string.IsNullOrEmpty(x))
+                    .Distinct()
+                    .ToList();
+                owned = owners.Count == 1 && owners[0] == user.Id;
+            }
+            else
+            {
                 residualRecord = FindResidualTvCatalogRecord(state, requestId);
-                if (residualRecord == null || !await HasResidualTvSeries(residualRecord))
+                if (residualRecord == null)
                 {
-                    return new MediaCleanupTvSelectionViewModel { Result = false, Message = "The available Ombi TV request or residual Sonarr series could not be found." };
+                    return new MediaCleanupTvSelectionViewModel { Result = false, Message = "The requested TV cleanup selection is not available." };
                 }
+
+                cleanup = FindActiveForMedia(
+                    activeRecords,
+                    RequestType.TvShow,
+                    residualRecord.MediaRequestId,
+                    residualRecord.TheMovieDbId,
+                    residualRecord.TvDbId);
+                var owners = (residualRecord.OwnerUserIds ?? new List<string>())
+                    .Where(x => !string.IsNullOrEmpty(x))
+                    .Distinct()
+                    .ToList();
+                owned = owners.Count == 1 && owners[0] == user.Id;
+            }
+
+            if (!CanSeeItem(cleanup, owned, settings, permissions, user.Id))
+            {
+                return new MediaCleanupTvSelectionViewModel { Result = false, Message = "The requested TV cleanup selection is not available." };
+            }
+
+            if (!usableRequest && !await HasResidualTvSeries(residualRecord))
+            {
+                return new MediaCleanupTvSelectionViewModel { Result = false, Message = "The available Ombi TV request or residual Sonarr series could not be found." };
             }
 
             var title = usableRequest ? tv.Title : residualRecord.Title;
@@ -663,6 +719,15 @@ namespace Ombi.Core.Engine
                 var episodes = (await _sonarr.GetEpisodes(series.id, sonarrSettings.ApiKey, sonarrSettings.FullUri)).ToList();
                 var episodeFiles = (await _sonarr.GetEpisodeFiles(series.id, sonarrSettings.ApiKey, sonarrSettings.FullUri)).ToList();
                 var fileById = episodeFiles.GroupBy(x => x.id).ToDictionary(x => x.Key, x => x.First());
+                // The UI only needs a stable grouping key so multi-episode files are selected and
+                // sized once. Do not expose Sonarr's internal EpisodeFileId to the browser.
+                var fileGroupById = episodeFiles
+                    .Where(x => x.id > 0)
+                    .Select(x => x.id)
+                    .Distinct()
+                    .OrderBy(x => x)
+                    .Select((fileId, index) => new { fileId, groupId = index + 1 })
+                    .ToDictionary(x => x.fileId, x => x.groupId);
 
                 var result = new MediaCleanupTvSelectionViewModel
                 {
@@ -697,7 +762,7 @@ namespace Ombi.Core.Engine
                                 Title = episode.title,
                                 AirDateUtc = episode.airDateUtc == default ? (DateTime?)null : episode.airDateUtc,
                                 HasFile = episode.hasFile && episode.episodeFileId > 0,
-                                EpisodeFileId = episode.episodeFileId,
+                                FileGroupId = episode.episodeFileId > 0 && fileGroupById.TryGetValue(episode.episodeFileId, out var groupId) ? groupId : 0,
                                 SizeOnDisk = episode.episodeFileId > 0 && fileById.TryGetValue(episode.episodeFileId, out var file) ? file.size : 0
                             }).ToList()
                         };

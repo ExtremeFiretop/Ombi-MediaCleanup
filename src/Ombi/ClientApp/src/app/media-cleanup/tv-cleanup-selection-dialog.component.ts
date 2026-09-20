@@ -83,22 +83,22 @@ export class TvCleanupSelectionDialogComponent implements OnInit {
     }
 
     public fileEpisodes(season: IMediaCleanupTvSeason): IMediaCleanupTvEpisode[] {
-        return season.episodes.filter(x => x.hasFile && x.episodeFileId > 0);
+        return season.episodes.filter(x => x.hasFile && x.fileGroupId > 0);
     }
 
     public isEpisodeSelected(episode: IMediaCleanupTvEpisode): boolean {
-        if (!episode.hasFile || episode.episodeFileId <= 0) {
+        if (!episode.hasFile || episode.fileGroupId <= 0) {
             return false;
         }
-        return this.linkedEpisodes(episode.episodeFileId).every(x => this.selection.isSelected(x));
+        return this.linkedEpisodes(episode.fileGroupId).every(x => this.selection.isSelected(x));
     }
 
     public toggleEpisode(episode: IMediaCleanupTvEpisode): void {
-        if (!episode.hasFile || episode.episodeFileId <= 0) {
+        if (!episode.hasFile || episode.fileGroupId <= 0) {
             return;
         }
 
-        const linked = this.linkedEpisodes(episode.episodeFileId);
+        const linked = this.linkedEpisodes(episode.fileGroupId);
         if (linked.every(x => this.selection.isSelected(x))) {
             linked.forEach(x => this.selection.deselect(x));
         } else {
@@ -119,9 +119,9 @@ export class TvCleanupSelectionDialogComponent implements OnInit {
     public toggleSeason(season: IMediaCleanupTvSeason): void {
         const episodes = this.fileEpisodes(season);
         if (this.isAllSeasonSelected(season)) {
-            episodes.forEach(x => this.linkedEpisodes(x.episodeFileId).forEach(linked => this.selection.deselect(linked)));
+            episodes.forEach(x => this.linkedEpisodes(x.fileGroupId).forEach(linked => this.selection.deselect(linked)));
         } else {
-            episodes.forEach(x => this.linkedEpisodes(x.episodeFileId).forEach(linked => this.selection.select(linked)));
+            episodes.forEach(x => this.linkedEpisodes(x.fileGroupId).forEach(linked => this.selection.select(linked)));
         }
     }
 
@@ -136,8 +136,8 @@ export class TvCleanupSelectionDialogComponent implements OnInit {
     public get selectedSizeOnDisk(): number {
         const files = new Map<number, number>();
         for (const episode of this.uniqueSelectedEpisodes) {
-            if (!files.has(episode.episodeFileId)) {
-                files.set(episode.episodeFileId, episode.sizeOnDisk ?? 0);
+            if (!files.has(episode.fileGroupId)) {
+                files.set(episode.fileGroupId, episode.sizeOnDisk ?? 0);
             }
         }
         return Array.from(files.values()).reduce((sum, size) => sum + size, 0);
@@ -198,13 +198,13 @@ export class TvCleanupSelectionDialogComponent implements OnInit {
             .sort((a, b) => a.seasonNumber - b.seasonNumber || a.episodeNumber - b.episodeNumber);
     }
 
-    private linkedEpisodes(episodeFileId: number): IMediaCleanupTvEpisode[] {
-        if (episodeFileId <= 0) {
+    private linkedEpisodes(fileGroupId: number): IMediaCleanupTvEpisode[] {
+        if (fileGroupId <= 0) {
             return [];
         }
         return this.seasons
             .flatMap(season => season.episodes)
-            .filter(x => x.hasFile && x.episodeFileId === episodeFileId);
+            .filter(x => x.hasFile && x.fileGroupId === fileGroupId);
     }
 
     private selectionSummary(episodes: IMediaCleanupTvEpisode[]): string {

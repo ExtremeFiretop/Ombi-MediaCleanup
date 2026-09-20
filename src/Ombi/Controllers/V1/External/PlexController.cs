@@ -324,12 +324,12 @@ namespace Ombi.Controllers.V1.External
             Uri url;
             if (!wizard.Wizard)
             {
-                url = await _plexOAuthManager.GetOAuthUrl(wizard.Pin.code);
+                url = await _plexOAuthManager.GetOAuthUrl(wizard.Pin?.pollToken);
             }
             else
             {
                 var websiteAddress =$"{this.Request.Scheme}://{this.Request.Host}{this.Request.PathBase}";
-                url = await _plexOAuthManager.GetWizardOAuthUrl(wizard.Pin.code, websiteAddress);
+                url = await _plexOAuthManager.GetWizardOAuthUrl(wizard.Pin?.pollToken, websiteAddress);
             }
 
             if (url == null)

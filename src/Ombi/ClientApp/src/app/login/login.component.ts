@@ -161,7 +161,7 @@ export class LoginComponent implements OnDestroy, OnInit {
       username: value.username,
       rememberMe: value.rememberMe,
       usePlexOAuth: false,
-      plexTvPin: { id: 0, code: "" },
+      plexTvPin: { pollToken: "" },
     };
     this.authService.requiresPassword(user).subscribe((x) => {
       if (x && this.authenticationSettings.allowNoPassword) {
@@ -233,7 +233,7 @@ export class LoginComponent implements OnDestroy, OnInit {
               }
 
               this.pinTimer = setInterval(() => {
-                this.getPinResult(x.pinId);
+                this.getPinResult(x.pollToken);
               }, 1000);
             },
             error: () => {
@@ -253,13 +253,13 @@ export class LoginComponent implements OnDestroy, OnInit {
     });
   }
 
-  public getPinResult(pinId: number) {
+  public getPinResult(pollToken: string) {
     if (this.oAuthWindow.closed) {
         if (this.pinTimer) {
           clearInterval(this.pinTimer);
         }
     }
-    this.authService.oAuth(pinId).subscribe(
+    this.authService.oAuth(pollToken).subscribe(
       (x) => {
         if (x.access_token) {
           clearInterval(this.pinTimer);
