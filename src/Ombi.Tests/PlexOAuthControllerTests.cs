@@ -76,14 +76,16 @@ namespace Ombi.Tests
         }
 
         [Test]
-        public async Task OAuthWizardCallBack_ReturnsBadRequest_WhenPollTokenFormatIsInvalid()
+        public async Task OAuthWizardCallBack_DelegatesPollTokenValidationToManager()
         {
             SetAdminExists(false);
+            const string invalidPollToken = "not-a-valid-token";
+            _oAuthManager.Setup(x => x.GetAccessTokenFromPollToken(invalidPollToken)).ReturnsAsync(string.Empty);
 
-            var result = await _subject.OAuthWizardCallBack(new PlexOAuthPollRequest { PollToken = "not-a-valid-token" });
+            var result = await _subject.OAuthWizardCallBack(new PlexOAuthPollRequest { PollToken = invalidPollToken });
 
-            Assert.That(result, Is.InstanceOf<BadRequestObjectResult>());
-            _oAuthManager.Verify(x => x.GetAccessTokenFromPollToken(It.IsAny<string>()), Times.Never);
+            Assert.That(result, Is.InstanceOf<JsonResult>());
+            _oAuthManager.Verify(x => x.GetAccessTokenFromPollToken(invalidPollToken), Times.Once);
         }
     }
 }

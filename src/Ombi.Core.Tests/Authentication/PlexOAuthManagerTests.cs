@@ -101,6 +101,17 @@ namespace Ombi.Core.Tests.Authentication
         }
 
         [Test]
+        public async Task GetAccessTokenFromPollToken_ReturnsEmpty_WhenTokenFormatIsInvalid()
+        {
+            var subject = CreateSubject();
+
+            var token = await subject.GetAccessTokenFromPollToken("not-a-valid-token");
+
+            Assert.That(token, Is.Empty);
+            _mocker.GetMock<IPlexApi>().Verify(x => x.GetPin(It.IsAny<int>(), It.IsAny<string>()), Times.Never);
+        }
+
+        [Test]
         public void PollTokenValidation_RequiresExactly64LowercaseHexCharacters()
         {
             Assert.That(PlexOAuthPollToken.IsValid(new string('a', PlexOAuthPollToken.Length)), Is.True);

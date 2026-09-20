@@ -50,12 +50,8 @@ namespace Ombi.Controllers.V1
                 return Unauthorized();
             }
 
-            if (request == null || !PlexOAuthPollToken.IsValid(request.PollToken))
-            {
-                return BadRequest(new { error = "Plex OAuth session is missing or invalid" });
-            }
-
-            var accessToken = await _manager.GetAccessTokenFromPollToken(request.PollToken);
+            // The manager validates both token format and the server-side cached session before redemption.
+            var accessToken = await _manager.GetAccessTokenFromPollToken(request?.PollToken);
             if (accessToken.IsNullOrEmpty())
             {
                 return Json(new
