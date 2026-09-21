@@ -1,3 +1,14 @@
+## [4.60.50](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.49...v4.60.50) (2026-09-21)
+
+
+### Bug Fixes
+
+* **availability:** mark movies available when Radarr only has a 4K file ([264ae07](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/264ae07cbfcec5166f53d9e2ba2e1746243b18d8))
+* **i18n:** keep paginator labels from rendering as translation keys ([0c17762](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/0c17762d412e1132948339b5e523b06ee296ed00))
+* **pipes:** update HumanizePipe signature and add empty value handling ([4b4dfe2](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/4b4dfe2997cc089690a205f621da94514f4ed2af))
+
+
+
 ## [4.60.49](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.48...v4.60.49) (2026-09-20)
 
 
@@ -203,15 +214,6 @@
 ### Bug Fixes
 
 * **requests:** match loading placeholder to compact table view ([#5428](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5428)) ([4cc0302](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/4cc03025190e03ec53db5af5f0f5a9c8ad42a767))
-
-
-
-# [4.60.0](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.53.9...v4.60.0) (2026-06-11)
-
-
-### Features
-
-* **requests:** add compact view, sorting and user filtering to requests list ([#5424](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5424)) ([4e82fb1](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/4e82fb16e37f15bc684d2da5fa3e43866a7222a6)), closes [#5422](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5422)
 
 
 
