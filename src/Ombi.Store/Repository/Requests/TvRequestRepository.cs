@@ -21,6 +21,7 @@ namespace Ombi.Store.Repository.Requests
         public async Task<TvRequests> GetRequestAsync(int tvDbId)
         {
             return await Db.TvRequests.Where(x => x.ExternalProviderId == tvDbId)
+                .AsSplitQuery()
                 .Include(x => x.ChildRequests)
                     .ThenInclude(x => x.RequestedUser)
                 .Include(x => x.ChildRequests)
@@ -43,6 +44,7 @@ namespace Ombi.Store.Repository.Requests
         public IQueryable<TvRequests> Get()
         {
             return Db.TvRequests
+                .AsSplitQuery()
                 .Include(x => x.ChildRequests)
                 .ThenInclude(x => x.RequestedUser)
                 .Include(x => x.ChildRequests)
@@ -54,6 +56,7 @@ namespace Ombi.Store.Repository.Requests
         public IQueryable<TvRequests> Get(string userId)
         {
             return Db.TvRequests
+                .AsSplitQuery()
                 .Include(x => x.ChildRequests)
                 .ThenInclude(x => x.RequestedUser)
                 .Include(x => x.ChildRequests)
