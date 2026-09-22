@@ -1,3 +1,12 @@
+## [4.60.53](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.52...v4.60.53) (2026-09-22)
+
+
+### Bug Fixes
+
+* **tv:** prevent zero-ID Sonarr matches and remap Plex anthology seasons ([0cb757e](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/0cb757e2f88032527c49866f1302f07a4d3d74a7))
+
+
+
 ## [4.60.52](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.51...v4.60.52) (2026-09-22)
 
 
@@ -211,10 +220,6 @@
 ### Bug Fixes
 
 * **tv:** don't mark unaired shows as available ([#5434](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5434)) ([782896a](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/782896af65b511b612da28b5142e3051c84d53fe)), closes [#5433](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5433)
-
-
-
-## [4.60.3](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.2...v4.60.3) (2026-06-14)
 
 
 
