@@ -1,3 +1,15 @@
+## [4.60.58](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.57...v4.60.58) (2026-09-22)
+
+
+### Bug Fixes
+
+* **tv:** derive episode availability from Sonarr file state ([f43467c](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/f43467cbaf136be7cc3eb78d31f633f7081161c7))
+* **tv:** limit episode metadata fetches to requested seasons ([a800758](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/a8007585fef081e3035b34deeb7c690d56b42452))
+* **tv:** resolve existing requests across provider ID changes ([c8a6ab5](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/c8a6ab5c40e349732cb21b28cb45111fde17b0de))
+* **tv:** scope media-server episode availability to matched series ([fcb085f](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/fcb085f3cdd20f95110fff6bd033009f99404e75))
+
+
+
 ## [4.60.57](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.56...v4.60.57) (2026-09-22)
 
 
@@ -213,15 +225,6 @@
 ### Bug Fixes
 
 * **watchlist:** debounce Plex watchlist history pruning to stop re-requests ([#5427](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5427)) ([#5440](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5440)) ([05bf8f8](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/05bf8f8693e811377cdbea0f1c84da6eb40da912))
-
-
-
-## [4.60.8](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.7...v4.60.8) (2026-07-02)
-
-
-### Bug Fixes
-
-* **emby:** remove stale records, harden played sync, keep provider-id-less series ([#5439](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5439)) ([fd44619](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/fd44619d84dc4b88235590672673bc9b48531e38))
 
 
 
