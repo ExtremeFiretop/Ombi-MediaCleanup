@@ -1,3 +1,12 @@
+## [4.60.52](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.51...v4.60.52) (2026-09-22)
+
+
+### Bug Fixes
+
+* **tv:** resolve missing provider IDs before availability checks ([963ad72](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/963ad72731e4b76e14c6b7f9087c88b4d3708005))
+
+
+
 ## [4.60.51](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.50...v4.60.51) (2026-09-22)
 
 
@@ -206,15 +215,6 @@
 
 
 ## [4.60.3](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.2...v4.60.3) (2026-06-14)
-
-
-
-## [4.60.2](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.1...v4.60.2) (2026-06-11)
-
-
-### Bug Fixes
-
-* **watchlist:** only prune Plex watchlist history on a complete sync ([#5429](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5429)) ([186978c](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/186978c2bfff8b2f481639ca49a3cbd19a23ce38))
 
 
 
