@@ -1,3 +1,13 @@
+## [4.60.51](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.50...v4.60.51) (2026-09-22)
+
+
+### Bug Fixes
+
+* **notifications:** harden legacy mobile recipient handling ([85caf3c](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/85caf3cc3f7d54c6b0624a5d459133d011d3ab0d))
+* **tv:** prevent duplicate watchlist requests across provider ID changes ([4f2b833](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/4f2b833c983cac8bba9853e3737f3436e37e6fa6))
+
+
+
 ## [4.60.50](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.49...v4.60.50) (2026-09-21)
 
 
@@ -205,15 +215,6 @@
 ### Bug Fixes
 
 * **watchlist:** only prune Plex watchlist history on a complete sync ([#5429](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5429)) ([186978c](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/186978c2bfff8b2f481639ca49a3cbd19a23ce38))
-
-
-
-## [4.60.1](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.0...v4.60.1) (2026-06-11)
-
-
-### Bug Fixes
-
-* **requests:** match loading placeholder to compact table view ([#5428](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5428)) ([4cc0302](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/4cc03025190e03ec53db5af5f0f5a9c8ad42a767))
 
 
 
