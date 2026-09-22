@@ -359,48 +359,94 @@ namespace Ombi.Core.Engine
             var requestTvDbId = tvBuilder.ChildRequest.RequestTvDbId;
             var requestImdbId = tvBuilder.ChildRequest.RequestImdbId;
 
-            // Prefer an exact TMDB parent before considering stable alternate-id aliases.
-            // Existing databases can already contain duplicate parents from an earlier TMDB id
-            // change, so deterministic precedence prevents new children attaching arbitrarily.
+            // Prefer an exact TMDB parent. TVDB/IMDb aliases can identify the same anthology
+            // parent while referring to different standalone TMDB seasons, so an alias is only
+            // eligible for attachment when title/year metadata or an episode fingerprint proves
+            // that the request belongs to that Ombi parent.
             var existingRequest = await TvRepository.Get()
                 .FirstOrDefaultAsync(x => x.ExternalProviderId == tv.TheMovieDbId);
-            if (existingRequest == null && requestTvDbId > 0)
+            var matchedByExactTmdb = existingRequest != null;
+
+            TvRequestAliasIdentityMatch aliasMatch = null;
+            if (existingRequest == null && (requestTvDbId > 0 || !string.IsNullOrEmpty(requestImdbId)))
             {
-                existingRequest = await TvRepository.Get()
-                    .FirstOrDefaultAsync(x => x.TvDbId == requestTvDbId);
+                var aliasCandidates = await TvRepository.Get()
+                    .Where(x =>
+                        (requestTvDbId > 0 && x.TvDbId == requestTvDbId) ||
+                        (!string.IsNullOrEmpty(requestImdbId) && x.ImdbId == requestImdbId))
+                    .ToListAsync();
+
+                if (tvBuilder.ChildRequest.RequestExistingParentId > 0)
+                {
+                    existingRequest = aliasCandidates.FirstOrDefault(
+                        x => x.Id == tvBuilder.ChildRequest.RequestExistingParentId);
+                }
+
+                if (existingRequest == null)
+                {
+                    aliasMatch = TvRequestSeasonIdentityMatcher.FindSafeAliasMatch(
+                        tvBuilder.ChildRequest,
+                        aliasCandidates);
+                    existingRequest = aliasMatch?.Parent;
+                }
             }
-            if (existingRequest == null && !string.IsNullOrEmpty(requestImdbId))
-            {
-                existingRequest = await TvRepository.Get()
-                    .FirstOrDefaultAsync(x => x.ImdbId == requestImdbId);
-            }
+
             if (existingRequest != null)
             {
-                // Remove requests we already have, we just want new ones
-                foreach (var existingSeason in existingRequest.ChildRequests)
-                    foreach (var existing in existingSeason.SeasonRequests)
+                var existingSeasons = (existingRequest.ChildRequests ?? new List<ChildRequests>())
+                    .Where(x => x?.SeasonRequests != null)
+                    .SelectMany(x => x.SeasonRequests)
+                    .ToList();
+                var useLiteralSeasonNumbers = matchedByExactTmdb ||
+                    TvRequestSeasonIdentityMatcher.SeriesMetadataMatches(tvBuilder.ChildRequest, existingRequest) ||
+                    aliasMatch?.UseLiteralSeasonNumbers == true;
+
+                // Remove requests we already have, we just want new ones. For alias-only matches,
+                // map each season by fingerprint before comparing episode numbers so standalone S1
+                // cannot be confused with an unrelated anthology S1.
+                foreach (var newChild in tvBuilder.ChildRequest.SeasonRequests.ToList())
+                {
+                    int? targetSeasonNumber;
+                    if (useLiteralSeasonNumbers)
                     {
-                        var newChild = tvBuilder.ChildRequest.SeasonRequests.FirstOrDefault(x => x.SeasonNumber == existing.SeasonNumber);
-                        if (newChild != null)
-                        {
-                            // We have some requests in this season...
-                            // Let's find the episodes.
-                            foreach (var existingEp in existing.Episodes)
-                            {
-                                var duplicateEpisode = newChild.Episodes.FirstOrDefault(x => x.EpisodeNumber == existingEp.EpisodeNumber);
-                                if (duplicateEpisode != null)
-                                {
-                                    // Remove it.
-                                    newChild.Episodes.Remove(duplicateEpisode);
-                                }
-                            }
-                            if (!newChild.Episodes.Any())
-                            {
-                                // We may have removed all episodes
-                                tvBuilder.ChildRequest.SeasonRequests.Remove(newChild);
-                            }
-                        }
+                        targetSeasonNumber = newChild.SeasonNumber;
                     }
+                    else if (tvBuilder.ChildRequest.RequestSeasonMappings.TryGetValue(
+                                 newChild.SeasonNumber,
+                                 out var hintedSeasonNumber))
+                    {
+                        targetSeasonNumber = hintedSeasonNumber;
+                    }
+                    else if (aliasMatch != null && aliasMatch.SeasonMappings.TryGetValue(
+                                 newChild.SeasonNumber,
+                                 out var aliasSeasonNumber))
+                    {
+                        targetSeasonNumber = aliasSeasonNumber;
+                    }
+                    else
+                    {
+                        targetSeasonNumber = TvRequestSeasonIdentityMatcher.FindSingleSeasonMatch(
+                            newChild,
+                            existingSeasons);
+                    }
+
+                    if (!targetSeasonNumber.HasValue)
+                    {
+                        continue;
+                    }
+
+                    var existingEpisodeNumbers = existingSeasons
+                        .Where(x => x.SeasonNumber == targetSeasonNumber.Value)
+                        .SelectMany(x => x.Episodes ?? new List<EpisodeRequests>())
+                        .Select(x => x.EpisodeNumber)
+                        .ToHashSet();
+
+                    newChild.Episodes.RemoveAll(x => existingEpisodeNumbers.Contains(x.EpisodeNumber));
+                    if (!newChild.Episodes.Any())
+                    {
+                        tvBuilder.ChildRequest.SeasonRequests.Remove(newChild);
+                    }
+                }
 
                 if (!tvBuilder.ChildRequest.SeasonRequests.Any())
                 {

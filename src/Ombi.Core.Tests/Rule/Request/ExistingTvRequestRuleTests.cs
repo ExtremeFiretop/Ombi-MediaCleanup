@@ -80,6 +80,7 @@ namespace Ombi.Core.Tests.Rule.Request
                     }
                 },
                 Id = 1,
+                RequestTheMovieDbId = 1,
             };
             var result = await Rule.Execute(req);
 
@@ -122,6 +123,7 @@ namespace Ombi.Core.Tests.Rule.Request
                     }
                 },
                 Id = 1,
+                RequestTheMovieDbId = 1,
             };
             var result = await Rule.Execute(req);
 
@@ -201,7 +203,9 @@ namespace Ombi.Core.Tests.Rule.Request
                     ParentRequest = new TvRequests
                     {
                         ExternalProviderId = 299939,
-                        ImdbId = "tt13207736"
+                        ImdbId = "tt13207736",
+                        Title = "Monster",
+                        ReleaseDate = new System.DateTime(2022, 9, 21)
                     },
                     SeasonRequests = new List<SeasonRequests>
                     {
@@ -225,6 +229,7 @@ namespace Ombi.Core.Tests.Rule.Request
                 RequestTheMovieDbId = 335840,
                 RequestImdbId = "tt13207736",
                 Title = "Monster",
+                ReleaseYear = new System.DateTime(2022, 9, 21),
                 SeasonRequests = new List<SeasonRequests>
                 {
                     new SeasonRequests
@@ -242,6 +247,205 @@ namespace Ombi.Core.Tests.Rule.Request
 
             Assert.That(result.Success, Is.False);
             Assert.That(result.ErrorCode, Is.EqualTo(Ombi.Core.Engine.ErrorCode.EpisodesAlreadyRequested));
+        }
+
+
+        [Test]
+        public async Task RequestShow_SharedAnthologyAlias_DoesNotTreatDifferentSeasonContentAsDuplicate()
+        {
+            var childRequests = new List<ChildRequests>
+            {
+                new ChildRequests
+                {
+                    ParentRequest = new TvRequests
+                    {
+                        Id = 10,
+                        ExternalProviderId = 113988,
+                        TvDbId = 389492,
+                        ImdbId = "tt13207736",
+                        Title = "DAHMER - Monster: The Jeffrey Dahmer Story",
+                        ReleaseDate = new System.DateTime(2022, 9, 21)
+                    },
+                    SeasonRequests = new List<SeasonRequests>
+                    {
+                        new SeasonRequests
+                        {
+                            SeasonNumber = 1,
+                            Episodes = new List<EpisodeRequests>
+                            {
+                                new EpisodeRequests { EpisodeNumber = 1, Title = "Episode One" },
+                                new EpisodeRequests { EpisodeNumber = 2, Title = "Please Don't Go" },
+                                new EpisodeRequests { EpisodeNumber = 3, Title = "Doin' a Dahmer" }
+                            }
+                        }
+                    }
+                }
+            };
+            TvRequestRepo.Setup(x => x.GetChild()).Returns(childRequests.AsQueryable().BuildMock());
+            TvRequestRepo.Setup(x => x.CleanupOrphanedRequestData()).ReturnsAsync(0);
+
+            var req = new ChildRequests
+            {
+                RequestType = RequestType.TvShow,
+                RequestTheMovieDbId = 299939,
+                RequestTvDbId = 389492,
+                RequestImdbId = "tt13207736",
+                Title = "Monster: The Lizzie Borden Story",
+                ReleaseYear = new System.DateTime(2026, 9, 17),
+                SeasonRequests = new List<SeasonRequests>
+                {
+                    new SeasonRequests
+                    {
+                        SeasonNumber = 1,
+                        Episodes = new List<EpisodeRequests>
+                        {
+                            new EpisodeRequests { EpisodeNumber = 1, Title = "Bloodbath" },
+                            new EpisodeRequests { EpisodeNumber = 2, Title = "Strong Kitty" },
+                            new EpisodeRequests { EpisodeNumber = 3, Title = "Whack Job!" }
+                        }
+                    }
+                }
+            };
+
+            var result = await Rule.Execute(req);
+
+            Assert.That(result.Success, Is.True);
+            Assert.That(req.SeasonRequests.Single().Episodes.Count, Is.EqualTo(3));
+            Assert.That(req.RequestExistingParentId, Is.EqualTo(0));
+            Assert.That(req.RequestSeasonMappings, Is.Empty);
+        }
+
+        [Test]
+        public async Task RequestShow_SharedAnthologyAlias_UsesEpisodeFingerprintToMapSeason()
+        {
+            var childRequests = new List<ChildRequests>
+            {
+                new ChildRequests
+                {
+                    ParentRequest = new TvRequests
+                    {
+                        Id = 11,
+                        ExternalProviderId = 335840,
+                        TvDbId = 389492,
+                        ImdbId = "tt13207736",
+                        Title = "Monster (2022)",
+                        ReleaseDate = new System.DateTime(2022, 9, 21)
+                    },
+                    SeasonRequests = new List<SeasonRequests>
+                    {
+                        new SeasonRequests
+                        {
+                            SeasonNumber = 4,
+                            Episodes = new List<EpisodeRequests>
+                            {
+                                new EpisodeRequests { EpisodeNumber = 1, Title = "Bloodbath" },
+                                new EpisodeRequests { EpisodeNumber = 2, Title = "Strong Kitty" },
+                                new EpisodeRequests { EpisodeNumber = 3, Title = "Whack Job!" }
+                            }
+                        }
+                    }
+                }
+            };
+            TvRequestRepo.Setup(x => x.GetChild()).Returns(childRequests.AsQueryable().BuildMock());
+            TvRequestRepo.Setup(x => x.CleanupOrphanedRequestData()).ReturnsAsync(0);
+
+            var req = new ChildRequests
+            {
+                RequestType = RequestType.TvShow,
+                RequestTheMovieDbId = 299939,
+                RequestTvDbId = 389492,
+                RequestImdbId = "tt13207736",
+                Title = "Monster: The Lizzie Borden Story",
+                ReleaseYear = new System.DateTime(2026, 9, 17),
+                SeasonRequests = new List<SeasonRequests>
+                {
+                    new SeasonRequests
+                    {
+                        SeasonNumber = 1,
+                        Episodes = new List<EpisodeRequests>
+                        {
+                            new EpisodeRequests { EpisodeNumber = 1, Title = "Bloodbath" },
+                            new EpisodeRequests { EpisodeNumber = 2, Title = "Strong Kitty" },
+                            new EpisodeRequests { EpisodeNumber = 3, Title = "Whack Job!" }
+                        }
+                    }
+                }
+            };
+
+            var result = await Rule.Execute(req);
+
+            Assert.That(result.Success, Is.False);
+            Assert.That(result.ErrorCode, Is.EqualTo(Ombi.Core.Engine.ErrorCode.EpisodesAlreadyRequested));
+            Assert.That(req.RequestExistingParentId, Is.EqualTo(11));
+            Assert.That(req.RequestSeasonMappings[1], Is.EqualTo(4));
+        }
+
+
+        [Test]
+        public async Task RequestShow_SharedAnthologyAlias_PreservesMappingAfterPartialDuplicateRemoval()
+        {
+            var childRequests = new List<ChildRequests>
+            {
+                new ChildRequests
+                {
+                    ParentRequest = new TvRequests
+                    {
+                        Id = 12,
+                        ExternalProviderId = 335840,
+                        TvDbId = 389492,
+                        ImdbId = "tt13207736",
+                        Title = "Monster (2022)",
+                        ReleaseDate = new System.DateTime(2022, 9, 21)
+                    },
+                    SeasonRequests = new List<SeasonRequests>
+                    {
+                        new SeasonRequests
+                        {
+                            SeasonNumber = 4,
+                            Episodes = new List<EpisodeRequests>
+                            {
+                                new EpisodeRequests { EpisodeNumber = 1, Title = "Bloodbath" },
+                                new EpisodeRequests { EpisodeNumber = 2, Title = "Strong Kitty" },
+                                new EpisodeRequests { EpisodeNumber = 3, Title = "Whack Job!" }
+                            }
+                        }
+                    }
+                }
+            };
+            TvRequestRepo.Setup(x => x.GetChild()).Returns(childRequests.AsQueryable().BuildMock());
+            TvRequestRepo.Setup(x => x.CleanupOrphanedRequestData()).ReturnsAsync(0);
+
+            var req = new ChildRequests
+            {
+                RequestType = RequestType.TvShow,
+                RequestTheMovieDbId = 299939,
+                RequestTvDbId = 389492,
+                RequestImdbId = "tt13207736",
+                Title = "Monster: The Lizzie Borden Story",
+                ReleaseYear = new System.DateTime(2026, 9, 17),
+                SeasonRequests = new List<SeasonRequests>
+                {
+                    new SeasonRequests
+                    {
+                        SeasonNumber = 1,
+                        Episodes = new List<EpisodeRequests>
+                        {
+                            new EpisodeRequests { EpisodeNumber = 1, Title = "Bloodbath" },
+                            new EpisodeRequests { EpisodeNumber = 2, Title = "Strong Kitty" },
+                            new EpisodeRequests { EpisodeNumber = 3, Title = "Whack Job!" },
+                            new EpisodeRequests { EpisodeNumber = 4, Title = "R.I.P (Rest in Pestilence) Abby Borden" },
+                            new EpisodeRequests { EpisodeNumber = 5, Title = "41" }
+                        }
+                    }
+                }
+            };
+
+            var result = await Rule.Execute(req);
+
+            Assert.That(result.Success, Is.True);
+            Assert.That(req.SeasonRequests.Single().Episodes.Select(x => x.EpisodeNumber), Is.EqualTo(new[] { 4, 5 }));
+            Assert.That(req.RequestExistingParentId, Is.EqualTo(12));
+            Assert.That(req.RequestSeasonMappings[1], Is.EqualTo(4));
         }
 
         [Test]
@@ -278,6 +482,7 @@ namespace Ombi.Core.Tests.Rule.Request
                     }
                 },
                 Id = 1,
+                RequestTheMovieDbId = 1,
             };
             var result = await Rule.Execute(req);
 

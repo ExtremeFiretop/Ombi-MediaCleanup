@@ -43,6 +43,18 @@ namespace Ombi.Store.Entities.Requests
         [JsonIgnore]
         public string RequestImdbId { get; set; }
 
+        // Request-time alias resolution hints. ExistingTvRequestRule can establish a safe anthology
+        // parent/season mapping before other request rules remove episodes from this transient graph.
+        // Preserve that mapping for TvRequestEngine so later attachment does not have to infer the
+        // relationship again from a potentially reduced episode list.
+        [NotMapped]
+        [JsonIgnore]
+        public int RequestExistingParentId { get; set; }
+
+        [NotMapped]
+        [JsonIgnore]
+        public Dictionary<int, int> RequestSeasonMappings { get; set; } = new Dictionary<int, int>();
+
         [ForeignKey(nameof(IssueId))]
         public List<Issues> Issues { get; set; }
 
