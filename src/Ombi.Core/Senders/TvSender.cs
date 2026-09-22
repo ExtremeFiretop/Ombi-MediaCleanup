@@ -366,7 +366,7 @@ namespace Ombi.Core.Senders
             }
 
             var parent = model.ParentRequest;
-            Ombi.Api.External.ExternalApis.TheMovieDb.Models.ExternalIds externalIds = null;
+            Ombi.Api.External.ExternalApis.TheMovieDb.Models.TvExternals externalIds = null;
 
             if (parent.ExternalProviderId > 0)
             {
