@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Ombi.Core.Engine;
 using Ombi.Core.Models.Search;
+using Ombi.Core.Rule.Rules.Search;
 using Ombi.Helpers;
 using Ombi.Store.Context;
 using Ombi.Store.Entities;
@@ -81,7 +82,11 @@ namespace Ombi.Core.Rule.Rules
                 {
                     return new RuleResult { Success = true };
                 }
-                var tvdbidint = int.Parse(vm.TheTvDbId);
+                if (!int.TryParse(vm.TheTvDbId, out var tvdbidint))
+                {
+                    return new RuleResult { Success = true };
+                }
+
                 var existsInSonarr = await _ctx.SonarrCache
                     .AsNoTracking()
                     .AnyAsync(x => x.TvDbId == tvdbidint);
@@ -121,10 +126,13 @@ namespace Ombi.Core.Rule.Rules
                                 ep.Approved = true;
                                 if (episodesWithFiles.Contains(episodeKey))
                                 {
+                                    ep.Available = true;
                                     obj.Available = true;
                                 }
                             }
                         }
+
+                        AvailabilityRuleHelper.CheckForUnairedEpisodes(vm);
                     }
                 }
             }
