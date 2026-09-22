@@ -6,6 +6,7 @@ using Ombi.Core.Models.Search.V2.Music;
 using Ombi.Core.Helpers;
 using Ombi.Core.Rule.Interfaces;
 using Ombi.Store.Entities;
+using Ombi.Store.Entities.Requests;
 using Ombi.Store.Repository.Requests;
 
 namespace Ombi.Core.Rule.Rules.Search
