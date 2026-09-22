@@ -35,6 +35,7 @@ namespace Ombi.Api.External.ExternalApis.Sonarr.Models
         public int tvdbId { get; set; }
         public int tvRageId { get; set; }
         public int tvMazeId { get; set; }
+        public int tmdbId { get; set; }
         public DateTime firstAired { get; set; }
         public DateTime lastInfoSync { get; set; }
         public string seriesType { get; set; }

@@ -124,7 +124,7 @@ namespace Ombi.Core.Senders
                 return null;
             }
 
-            await EnsureTvDbId(model);
+            await EnsureTvDbId(model, s);
 
             var options = new SonarrSendOptions();
 
@@ -358,7 +358,7 @@ namespace Ombi.Core.Senders
             }
         }
 
-        private async Task EnsureTvDbId(ChildRequests model)
+        private async Task EnsureTvDbId(ChildRequests model, SonarrSettings settings)
         {
             if (model?.ParentRequest == null || model.ParentRequest.TvDbId > 0)
             {
@@ -366,38 +366,123 @@ namespace Ombi.Core.Senders
             }
 
             var parent = model.ParentRequest;
+            Ombi.Api.External.ExternalApis.TheMovieDb.Models.ExternalIds externalIds = null;
+
+            if (parent.ExternalProviderId > 0)
+            {
+                Logger.LogWarning(
+                    "TV request {RequestId} for {Title} is missing a TVDB ID; refreshing TMDB external IDs for TMDB {TmdbId}",
+                    model.Id, parent.Title, parent.ExternalProviderId);
+
+                // Let network/API exceptions propagate normally. Those are transient failures and
+                // should remain eligible for the regular failed-request retry mechanism.
+                externalIds = await MovieDbApi.GetTvExternals(parent.ExternalProviderId);
+                if (string.IsNullOrEmpty(parent.ImdbId) && !string.IsNullOrEmpty(externalIds?.imdb_id))
+                {
+                    parent.ImdbId = externalIds.imdb_id;
+                }
+
+                if (externalIds?.tvdb_id > 0)
+                {
+                    parent.TvDbId = externalIds.tvdb_id;
+                    await TvRequestRepository.Save();
+
+                    Logger.LogInformation(
+                        "Repaired TV request {RequestId} for {Title}: TMDB {TmdbId} -> TVDB {TvdbId}",
+                        model.Id, parent.Title, parent.ExternalProviderId, parent.TvDbId);
+                    return;
+                }
+            }
+
+            // Some anthology seasons are exposed by TMDB as standalone series while Sonarr/TVDB
+            // keeps them under the anthology parent. If TMDB cannot provide a TVDB mapping, use
+            // Sonarr's own series metadata. Prefer provider IDs and only then accept one unique
+            // normalized title/alternate-title match.
+            var allSeries = (await SonarrApi.GetSeries(settings.ApiKey, settings.FullUri))?.ToList()
+                ?? new List<SonarrSeries>();
+
+            SonarrSeries sonarrMatch = null;
+            if (parent.ExternalProviderId > 0)
+            {
+                sonarrMatch = GetUniqueSeriesMatch(allSeries,
+                    x => x.tmdbId == parent.ExternalProviderId);
+            }
+
+            if (sonarrMatch == null && !string.IsNullOrWhiteSpace(parent.ImdbId))
+            {
+                sonarrMatch = GetUniqueSeriesMatch(allSeries,
+                    x => string.Equals(x.imdbId, parent.ImdbId, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (sonarrMatch == null)
+            {
+                var normalizedRequestTitle = NormalizeSeriesTitle(parent.Title);
+                if (!string.IsNullOrEmpty(normalizedRequestTitle))
+                {
+                    var titleMatches = allSeries
+                        .Where(x =>
+                            NormalizeSeriesTitle(x?.title) == normalizedRequestTitle ||
+                            (x?.alternateTitles?.Any(a =>
+                                NormalizeSeriesTitle(a?.title) == normalizedRequestTitle) ?? false))
+                        .Take(2)
+                        .ToList();
+
+                    if (titleMatches.Count == 1)
+                    {
+                        sonarrMatch = titleMatches[0];
+                    }
+                    else if (titleMatches.Count > 1)
+                    {
+                        Logger.LogWarning(
+                            "Could not repair TVDB ID for TV request {RequestId} ({Title}) because multiple Sonarr series matched the normalized title/alternate title",
+                            model.Id, parent.Title);
+                    }
+                }
+            }
+
+            if (sonarrMatch?.tvdbId > 0)
+            {
+                parent.TvDbId = sonarrMatch.tvdbId;
+                if (string.IsNullOrEmpty(parent.ImdbId) && !string.IsNullOrEmpty(sonarrMatch.imdbId))
+                {
+                    parent.ImdbId = sonarrMatch.imdbId;
+                }
+
+                await TvRequestRepository.Save();
+
+                Logger.LogInformation(
+                    "Repaired TV request {RequestId} for {Title} from existing Sonarr series {SonarrTitle}: TVDB {TvdbId}",
+                    model.Id, parent.Title, sonarrMatch.title, parent.TvDbId);
+                return;
+            }
+
             if (parent.ExternalProviderId <= 0)
             {
                 throw new MissingTvDbIdException(
-                    $"{MissingTvDbAfterRefreshPrefix}: '{parent.Title}' (child request {model.Id}) also has no TheMovieDb ID, so Ombi cannot repair the mapping automatically.");
+                    $"{MissingTvDbAfterRefreshPrefix}: '{parent.Title}' (child request {model.Id}) has no TMDB ID and no unique existing Sonarr mapping.");
             }
 
-            Logger.LogWarning(
-                "TV request {RequestId} for {Title} is missing a TVDB ID; refreshing TMDB external IDs for TMDB {TmdbId}",
-                model.Id, parent.Title, parent.ExternalProviderId);
+            throw new MissingTvDbIdException(
+                $"{MissingTvDbAfterRefreshPrefix}: '{parent.Title}' (child request {model.Id}, TMDB {parent.ExternalProviderId}) still has no TVDB mapping and no unique existing Sonarr match.");
+        }
 
-            // Let network/API exceptions propagate normally. Those are transient failures and
-            // should remain eligible for the regular failed-request retry mechanism.
-            var externalIds = await MovieDbApi.GetTvExternals(parent.ExternalProviderId);
-            if (externalIds?.tvdb_id <= 0)
+        private static SonarrSeries GetUniqueSeriesMatch(IEnumerable<SonarrSeries> series, Func<SonarrSeries, bool> predicate)
+        {
+            var matches = series.Where(x => x != null && predicate(x)).Take(2).ToList();
+            return matches.Count == 1 ? matches[0] : null;
+        }
+
+        private static string NormalizeSeriesTitle(string title)
+        {
+            if (string.IsNullOrWhiteSpace(title))
             {
-                throw new MissingTvDbIdException(
-                    $"{MissingTvDbAfterRefreshPrefix}: '{parent.Title}' (child request {model.Id}, TMDB {parent.ExternalProviderId}) still has no TVDB mapping.");
+                return string.Empty;
             }
 
-            parent.TvDbId = externalIds.tvdb_id;
-            if (string.IsNullOrEmpty(parent.ImdbId) && !string.IsNullOrEmpty(externalIds.imdb_id))
-            {
-                parent.ImdbId = externalIds.imdb_id;
-            }
-
-            // Requests are persisted before they are auto-sent, and retry-queue requests are loaded
-            // tracked from ITvRequestRepository, so saving here permanently repairs old rows too.
-            await TvRequestRepository.Save();
-
-            Logger.LogInformation(
-                "Repaired TV request {RequestId} for {Title}: TMDB {TmdbId} -> TVDB {TvdbId}",
-                model.Id, parent.Title, parent.ExternalProviderId, parent.TvDbId);
+            return new string(title
+                .Where(char.IsLetterOrDigit)
+                .Select(char.ToLowerInvariant)
+                .ToArray());
         }
 
         public const string MissingTvDbAfterRefreshPrefix = "TVDBID is missing after TMDB external-id refresh";

@@ -83,7 +83,7 @@ namespace Ombi.Schedule.Jobs.Sonarr
                     TvDbId = x.tvdbId,
                     ImdbId = x.imdbId,
                     Title = x.title,
-                    MovieDbId = 0,
+                    MovieDbId = x.tmdbId,
                     Id = x.id,
                     Monitored = x.monitored,
                     EpisodeFileCount = x.episodeFileCount
@@ -102,11 +102,20 @@ namespace Ombi.Schedule.Jobs.Sonarr
                         TvDbId = id.TvDbId
                     };
 
-                    var findResult = await _movieDbApi.Find(id.TvDbId.ToString(), ExternalSource.tvdb_id);
-                    if (findResult?.tv_results?.Any() == true)
+                    if (id.MovieDbId > 0)
                     {
-                        cache.TheMovieDbId = findResult.tv_results.FirstOrDefault()?.id ?? -1;
-                        id.MovieDbId = cache.TheMovieDbId;
+                        // Modern Sonarr responses already contain the TMDB ID. Prefer that value
+                        // instead of translating TVDB -> TMDB through another provider call.
+                        cache.TheMovieDbId = id.MovieDbId;
+                    }
+                    else
+                    {
+                        var findResult = await _movieDbApi.Find(id.TvDbId.ToString(), ExternalSource.tvdb_id);
+                        if (findResult?.tv_results?.Any() == true)
+                        {
+                            cache.TheMovieDbId = findResult.tv_results.FirstOrDefault()?.id ?? -1;
+                            id.MovieDbId = cache.TheMovieDbId;
+                        }
                     }
 
                     seriesSnapshot.Add(cache);
