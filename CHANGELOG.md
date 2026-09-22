@@ -1,3 +1,13 @@
+## [4.60.54](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.53...v4.60.54) (2026-09-22)
+
+
+### Bug Fixes
+
+* **sonarr:** fall back to IMDb when resolving TMDB IDs during sync ([57767a3](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/57767a389fde029185a3d53862c2b6fe640bae12))
+* **tv:** repair missing TVDB IDs using existing Sonarr series ([2555364](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/255536490b6f4681329b31f97cd00d0ecb28ccf7))
+
+
+
 ## [4.60.53](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.52...v4.60.53) (2026-09-22)
 
 
@@ -211,15 +221,6 @@
 
 
 ## [4.60.5](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.4...v4.60.5) (2026-06-15)
-
-
-
-## [4.60.4](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.3...v4.60.4) (2026-06-15)
-
-
-### Bug Fixes
-
-* **tv:** don't mark unaired shows as available ([#5434](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5434)) ([782896a](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/782896af65b511b612da28b5142e3051c84d53fe)), closes [#5433](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5433)
 
 
 
