@@ -1,3 +1,13 @@
+## [4.60.56](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.55...v4.60.56) (2026-09-22)
+
+
+### Bug Fixes
+
+* **tv:** avoid unsafe TMDB episode dedupe in Sonarr cache ([a42c55e](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/a42c55eefb1e6b4140037091af77de68df3087ef))
+* **tv:** make request dedupe and parent attachment anthology-aware ([531b58a](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/531b58a65491d25703420cb3da087c8efcb7ac0c))
+
+
+
 ## [4.60.55](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.54...v4.60.55) (2026-09-22)
 
 
@@ -212,15 +222,6 @@
 ### Bug Fixes
 
 * **emby:** make episode sync pagination deterministic and harden multi-episode fill ([#5438](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5438)) ([20aecdd](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/20aecdd1b7d9a00c65706ce240f9691774f5da6f))
-
-
-
-## [4.60.6](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.5...v4.60.6) (2026-06-18)
-
-
-### Bug Fixes
-
-* **dvr:** reset auto-increment in a database-provider-aware way ([#5436](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5436)) ([968aeb3](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/968aeb3ed851a07929c3859258a01a434d6bbd56)), closes [#5435](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5435) [#5435](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5435)
 
 
 
