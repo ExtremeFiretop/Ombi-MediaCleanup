@@ -89,6 +89,8 @@ namespace Ombi.Core.Engine.V2
                 show.Images = enShow.Images;
             }
 
+            await PopulateMissingExternalIds(show);
+
             var mapped = _mapper.Map<SearchFullInfoTvShowViewModel>(show);
 
 
@@ -100,6 +102,34 @@ namespace Ombi.Core.Engine.V2
             }
 
             return await ProcessResult(mapped);
+        }
+
+        private async Task PopulateMissingExternalIds(TvInfo show)
+        {
+            show.ExternalIds ??= new ExternalIds();
+
+            var hasImdbId = show.ExternalIds.ImdbId.HasValue();
+            var hasTvDbId = int.TryParse(show.ExternalIds.TvDbId, out var tvDbId) && tvDbId > 0;
+            if (hasImdbId && hasTvDbId)
+            {
+                return;
+            }
+
+            var externalIds = await _movieApi.GetTvExternals(show.id);
+            if (externalIds == null)
+            {
+                return;
+            }
+
+            if (!hasImdbId && externalIds.imdb_id.HasValue())
+            {
+                show.ExternalIds.ImdbId = externalIds.imdb_id;
+            }
+
+            if (!hasTvDbId && externalIds.tvdb_id > 0)
+            {
+                show.ExternalIds.TvDbId = externalIds.tvdb_id.ToString();
+            }
         }
 
         public async Task<IEnumerable<SearchTvShowViewModel>> Popular(int currentlyLoaded, int amountToLoad, string langCustomCode = null)
