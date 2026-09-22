@@ -31,6 +31,17 @@ namespace Ombi.Core.Engine
     public class MediaCleanupEngine : IMediaCleanupEngine
     {
         private static readonly SemaphoreSlim StateLock = new SemaphoreSlim(1, 1);
+        private static readonly TimeSpan[] RetryDelays =
+        {
+            TimeSpan.FromMinutes(15),
+            TimeSpan.FromMinutes(30),
+            TimeSpan.FromHours(1),
+            TimeSpan.FromHours(2),
+            TimeSpan.FromHours(4),
+            TimeSpan.FromHours(8),
+            TimeSpan.FromHours(12),
+            TimeSpan.FromHours(24)
+        };
 
         // Quartz schedules jobs at whole-second precision, while DateTime.UtcNow includes
         // sub-second ticks. Keep cleanup deadlines at the same precision so a job that
@@ -46,6 +57,12 @@ namespace Ombi.Core.Engine
             // Truncate both sides for backwards compatibility with records created by
             // older builds that persisted fractional seconds in ScheduledForDeletionAt.
             return TruncateToSecond(scheduledForDeletionAt) <= TruncateToSecond(now);
+        }
+
+        private static TimeSpan GetRetryDelay(int retryCount)
+        {
+            var index = Math.Min(Math.Max(retryCount - 1, 0), RetryDelays.Length - 1);
+            return RetryDelays[index];
         }
 
         private readonly ISettingsService<MediaCleanupSettings> _settings;
@@ -1068,6 +1085,7 @@ namespace Ombi.Core.Engine
                 record.ApprovedByUserId = user.Id;
                 record.Status = MediaCleanupStatus.ScheduledForDeletion;
                 record.ScheduledForDeletionAt = TruncateToSecond(DateTime.UtcNow).AddDays(Math.Max(0, settings.GracePeriodDays));
+                ResetRetryState(record);
                 await SaveState(state);
                 return Success("Cleanup approved and scheduled for deletion.", record.Id);
             }
@@ -1151,6 +1169,7 @@ namespace Ombi.Core.Engine
                 {
                     record.Status = MediaCleanupStatus.Cancelled;
                     record.ScheduledForDeletionAt = null;
+                    ResetRetryState(record);
                 }
 
                 await SaveState(state);
@@ -1193,9 +1212,10 @@ namespace Ombi.Core.Engine
                         }
                     }
 
+                    var deletionDueAt = record.NextRetryAt ?? record.ScheduledForDeletionAt;
                     if (record.Status == MediaCleanupStatus.ScheduledForDeletion &&
-                        record.ScheduledForDeletionAt.HasValue &&
-                        IsDeletionDue(record.ScheduledForDeletionAt.Value, now) &&
+                        deletionDueAt.HasValue &&
+                        IsDeletionDue(deletionDueAt.Value, now) &&
                         (record.ExternalDeletionCompletedAt.HasValue || IsOriginEnabled(record, settings)))
                     {
                         await ExecuteDeletion(record, settings, state);
@@ -1249,6 +1269,7 @@ namespace Ombi.Core.Engine
 
                 record.Status = status;
                 record.ScheduledForDeletionAt = null;
+                ResetRetryState(record);
                 await SaveState(state);
                 return Success(message, record.Id);
             }
@@ -1351,17 +1372,35 @@ namespace Ombi.Core.Engine
                 {
                     var externalDeleted = record.RequestType == RequestType.Movie
                         ? await DeleteMovie(record, settings)
-                        : record.RequestType == RequestType.TvShow && await DeleteTv(record, settings);
+                        : record.RequestType == RequestType.TvShow
+                            ? await DeleteTv(record, settings)
+                            : throw new MediaCleanupTerminalException($"Unsupported cleanup request type: {record.RequestType}.");
 
                     if (!externalDeleted)
                     {
-                        throw new InvalidOperationException(record.RequestType == RequestType.Movie
-                            ? "The movie could not be found in an enabled Radarr instance."
-                            : "The series could not be found in the enabled Sonarr instance.");
+                        // A previous transient attempt may have reached *arr successfully even if
+                        // Ombi never received the response. If a whole-title retry now confirms the
+                        // title is absent, treat the destructive phase as complete rather than
+                        // getting permanently stuck on an ambiguous timeout/network failure.
+                        if (record.RetryCount > 0 && !IsPartialTvCleanup(record))
+                        {
+                            _logger.LogWarning(
+                                "Media cleanup retry could no longer find {RequestType} '{Title}' ({CleanupId}) in *arr after {RetryCount} transient failure(s); treating the external deletion as already completed",
+                                record.RequestType,
+                                record.Title,
+                                record.Id,
+                                record.RetryCount);
+                        }
+                        else
+                        {
+                            throw new MediaCleanupTerminalException(record.RequestType == RequestType.Movie
+                                ? "The movie could not be found in an enabled Radarr instance."
+                                : "The series or selected episodes could not be found in the enabled Sonarr instance.");
+                        }
                     }
 
                     record.ExternalDeletionCompletedAt = DateTime.UtcNow;
-                    record.FailureReason = null;
+                    ResetRetryState(record);
 
                     // Use a fresh scope for the checkpoint. SettingsService attaches a new
                     // GlobalSettings entity each time it saves, so saving twice through the same
@@ -1373,33 +1412,17 @@ namespace Ombi.Core.Engine
                         record.Title,
                         record.Id);
                 }
+                catch (MediaCleanupTerminalException ex)
+                {
+                    MarkTerminalFailure(record, ex, "external deletion");
+                    return;
+                }
                 catch (Exception ex)
                 {
-                    if (record.ExternalDeletionCompletedAt.HasValue)
-                    {
-                        // Radarr/Sonarr already confirmed deletion, but persisting the checkpoint
-                        // failed. Keep the in-memory record retryable; the caller's normal state
-                        // save gets another chance to persist the checkpoint before this scope ends.
-                        record.Status = MediaCleanupStatus.ScheduledForDeletion;
-                        record.ScheduledForDeletionAt = TruncateToSecond(DateTime.UtcNow);
-                        record.FailureReason = $"External deletion succeeded, but its recovery checkpoint could not be saved and will be retried: {ex.Message}";
-                        _logger.LogError(ex,
-                            "Media cleanup external deletion succeeded for {RequestType} '{Title}' ({CleanupId}), but the recovery checkpoint could not be saved",
-                            record.RequestType,
-                            record.Title,
-                            record.Id);
-                    }
-                    else
-                    {
-                        record.Status = MediaCleanupStatus.Failed;
-                        record.FailureReason = ex.Message;
-                        record.ScheduledForDeletionAt = null;
-                        _logger.LogError(ex,
-                            "Media cleanup external deletion failed for {RequestType} '{Title}' ({CleanupId})",
-                            record.RequestType,
-                            record.Title,
-                            record.Id);
-                    }
+                    var phase = record.ExternalDeletionCompletedAt.HasValue
+                        ? "external deletion recovery checkpoint"
+                        : "external deletion";
+                    ScheduleRetry(record, ex, phase);
                     return;
                 }
             }
@@ -1457,22 +1480,63 @@ namespace Ombi.Core.Engine
                 record.Status = MediaCleanupStatus.Completed;
                 record.CompletedAt = DateTime.UtcNow;
                 record.ScheduledForDeletionAt = null;
-                record.FailureReason = null;
+                ResetRetryState(record);
                 _logger.LogInformation("Media cleanup removed {RequestType} '{Title}' ({CleanupId})", record.RequestType, record.Title, record.Id);
             }
             catch (Exception ex)
             {
-                // The destructive operation is already complete. Keep this record active and due
-                // so the next Media Cleanup job resumes only the idempotent Ombi reconciliation.
-                record.Status = MediaCleanupStatus.ScheduledForDeletion;
-                record.ScheduledForDeletionAt = TruncateToSecond(DateTime.UtcNow);
-                record.FailureReason = $"External deletion succeeded, but Ombi reconciliation failed and will be retried: {ex.Message}";
-                _logger.LogError(ex,
-                    "Media cleanup reconciliation failed for {RequestType} '{Title}' ({CleanupId}); it will be retried without deleting from *arr again",
-                    record.RequestType,
-                    record.Title,
-                    record.Id);
+                // The destructive operation is already complete, so reconciliation is safe to
+                // retry indefinitely. Back off to avoid hammering a temporarily unavailable DB or
+                // service, but never turn an already-deleted title into a terminal cleanup failure.
+                ScheduleRetry(record, ex, "Ombi reconciliation");
             }
+        }
+
+        private void ScheduleRetry(MediaCleanupRecord record, Exception ex, string phase)
+        {
+            var now = DateTime.UtcNow;
+            if (record.RetryCount < int.MaxValue)
+            {
+                record.RetryCount++;
+            }
+
+            var delay = GetRetryDelay(record.RetryCount);
+            record.Status = MediaCleanupStatus.ScheduledForDeletion;
+            record.LastFailureAt = now;
+            record.NextRetryAt = TruncateToSecond(now.Add(delay));
+            record.FailureReason = $"{phase} failed and will retry automatically: {ex.Message}";
+
+            _logger.LogWarning(ex,
+                "Media cleanup {Phase} failed for {RequestType} '{Title}' ({CleanupId}); retry {RetryCount} is scheduled for {NextRetryAt}",
+                phase,
+                record.RequestType,
+                record.Title,
+                record.Id,
+                record.RetryCount,
+                record.NextRetryAt);
+        }
+
+        private void MarkTerminalFailure(MediaCleanupRecord record, Exception ex, string phase)
+        {
+            record.Status = MediaCleanupStatus.Failed;
+            record.LastFailureAt = DateTime.UtcNow;
+            record.NextRetryAt = null;
+            record.ScheduledForDeletionAt = null;
+            record.FailureReason = ex.Message;
+            _logger.LogError(ex,
+                "Media cleanup {Phase} failed permanently for {RequestType} '{Title}' ({CleanupId})",
+                phase,
+                record.RequestType,
+                record.Title,
+                record.Id);
+        }
+
+        private static void ResetRetryState(MediaCleanupRecord record)
+        {
+            record.RetryCount = 0;
+            record.LastFailureAt = null;
+            record.NextRetryAt = null;
+            record.FailureReason = null;
         }
 
         private async Task RemoveSelectedTvRequests(MediaCleanupRecord record)
@@ -1778,17 +1842,25 @@ namespace Ombi.Core.Engine
         {
             var deleted = false;
             var deletedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var anyEnabled = false;
 
             var regular = await _radarrSettings.GetSettingsAsync();
             if (regular.Enabled)
             {
+                anyEnabled = true;
                 deleted |= await DeleteMovieFromRadarr(record.TheMovieDbId, regular, cleanupSettings, deletedKeys);
             }
 
             var fourK = await _radarr4KSettings.GetSettingsAsync();
             if (fourK.Enabled)
             {
+                anyEnabled = true;
                 deleted |= await DeleteMovieFromRadarr(record.TheMovieDbId, fourK, cleanupSettings, deletedKeys);
+            }
+
+            if (!anyEnabled)
+            {
+                throw new MediaCleanupTerminalException("No Radarr instance is enabled for Media Cleanup.");
             }
 
             return deleted;
@@ -1806,7 +1878,11 @@ namespace Ombi.Core.Engine
                 {
                     continue;
                 }
-                await _radarr.DeleteMovie(movie.id, radarrSettings.ApiKey, radarrSettings.FullUri, cleanupSettings.DeleteFiles, cleanupSettings.AddImportExclusion);
+                var deleteSucceeded = await _radarr.DeleteMovie(movie.id, radarrSettings.ApiKey, radarrSettings.FullUri, cleanupSettings.DeleteFiles, cleanupSettings.AddImportExclusion);
+                if (!deleteSucceeded)
+                {
+                    throw new InvalidOperationException($"Radarr rejected the delete request for movie id {movie.id}.");
+                }
                 deleted = true;
             }
             return deleted;
@@ -1817,7 +1893,7 @@ namespace Ombi.Core.Engine
             var sonarrSettings = await _sonarrSettings.GetSettingsAsync();
             if (!sonarrSettings.Enabled)
             {
-                return false;
+                throw new MediaCleanupTerminalException("Sonarr is not enabled for Media Cleanup.");
             }
 
             var series = await _sonarr.GetSeries(sonarrSettings.ApiKey, sonarrSettings.FullUri);
@@ -1831,14 +1907,18 @@ namespace Ombi.Core.Engine
             {
                 if (!cleanupSettings.DeleteFiles)
                 {
-                    throw new InvalidOperationException(
+                    throw new MediaCleanupTerminalException(
                         "Specific TV episode cleanup requires Delete Files to remain enabled until the cleanup is completed.");
                 }
 
                 return await DeleteTvEpisodes(record, match, sonarrSettings);
             }
 
-            await _sonarr.DeleteSeries(match.id, sonarrSettings.ApiKey, sonarrSettings.FullUri, cleanupSettings.DeleteFiles, cleanupSettings.AddImportExclusion);
+            var deleteSucceeded = await _sonarr.DeleteSeries(match.id, sonarrSettings.ApiKey, sonarrSettings.FullUri, cleanupSettings.DeleteFiles, cleanupSettings.AddImportExclusion);
+            if (!deleteSucceeded)
+            {
+                throw new InvalidOperationException($"Sonarr rejected the delete request for series id {match.id}.");
+            }
             return true;
         }
 
@@ -1882,7 +1962,7 @@ namespace Ombi.Core.Engine
                 var examples = string.Join(", ", collateralEpisodes
                     .Take(5)
                     .Select(x => $"S{x.seasonNumber:00}E{x.episodeNumber:00}"));
-                throw new InvalidOperationException(
+                throw new MediaCleanupTerminalException(
                     $"Sonarr's episode-file layout changed after this cleanup was created. " +
                     $"Deleting the approved files would also remove unselected episode(s): {examples}. " +
                     "Cancel this cleanup and create a new selection.");
@@ -1893,7 +1973,11 @@ namespace Ombi.Core.Engine
             var episodeIds = selectedEpisodes.Select(x => x.id).Where(x => x > 0).Distinct().ToArray();
             if (episodeIds.Length > 0)
             {
-                await _sonarr.MonitorEpisode(episodeIds, false, sonarrSettings.ApiKey, sonarrSettings.FullUri);
+                var monitorResult = await _sonarr.MonitorEpisode(episodeIds, false, sonarrSettings.ApiKey, sonarrSettings.FullUri);
+                if (monitorResult == null)
+                {
+                    throw new InvalidOperationException("Sonarr did not confirm the episode unmonitor request.");
+                }
             }
 
             // When every file-bearing episode in a season was selected, also unmonitor the season.
@@ -1911,14 +1995,22 @@ namespace Ombi.Core.Engine
                 }
                 if (changed)
                 {
-                    await _sonarr.UpdateSeries(series, sonarrSettings.ApiKey, sonarrSettings.FullUri);
+                    var updatedSeries = await _sonarr.UpdateSeries(series, sonarrSettings.ApiKey, sonarrSettings.FullUri);
+                    if (updatedSeries == null)
+                    {
+                        throw new InvalidOperationException("Sonarr did not confirm the season unmonitor update.");
+                    }
                 }
             }
 
             var fileIds = selectedFileIds.ToList();
             foreach (var fileId in fileIds)
             {
-                await _sonarr.DeleteEpisodeFile(fileId, sonarrSettings.ApiKey, sonarrSettings.FullUri);
+                var deleteSucceeded = await _sonarr.DeleteEpisodeFile(fileId, sonarrSettings.ApiKey, sonarrSettings.FullUri);
+                if (!deleteSucceeded)
+                {
+                    throw new InvalidOperationException($"Sonarr rejected the delete request for episode file id {fileId}.");
+                }
             }
 
             _logger.LogInformation(
@@ -2323,6 +2415,7 @@ namespace Ombi.Core.Engine
                 {
                     record.Status = MediaCleanupStatus.ScheduledForDeletion;
                     record.ScheduledForDeletionAt = TruncateToSecond(now).AddDays(Math.Max(0, settings.GracePeriodDays));
+                    ResetRetryState(record);
                 }
                 return;
             }
@@ -2364,6 +2457,10 @@ namespace Ombi.Core.Engine
                 CreatedAt = record.CreatedAt,
                 VotingEndsAt = record.VotingEndsAt,
                 ScheduledForDeletionAt = record.ScheduledForDeletionAt,
+                ExternalDeletionCompletedAt = record.ExternalDeletionCompletedAt,
+                RetryCount = record.RetryCount,
+                LastFailureAt = record.LastFailureAt,
+                NextRetryAt = record.NextRetryAt,
                 FailureReason = record.FailureReason,
                 EntireSeries = !IsPartialTvCleanup(record),
                 ScopeLabel = BuildCleanupScopeLabel(record),
@@ -2837,6 +2934,13 @@ namespace Ombi.Core.Engine
             public bool Available { get; set; }
             public DateTime? AvailableSince { get; set; }
             public List<string> OwnerUserIds { get; set; } = new List<string>();
+        }
+
+        private sealed class MediaCleanupTerminalException : InvalidOperationException
+        {
+            public MediaCleanupTerminalException(string message) : base(message)
+            {
+            }
         }
 
         private class CleanupPermissions

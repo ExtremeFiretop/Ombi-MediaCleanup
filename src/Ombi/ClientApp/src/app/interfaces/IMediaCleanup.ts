@@ -95,6 +95,10 @@ export interface IMediaCleanupRequest {
     createdAt: Date;
     votingEndsAt?: Date;
     scheduledForDeletionAt?: Date;
+    externalDeletionCompletedAt?: Date;
+    retryCount: number;
+    lastFailureAt?: Date;
+    nextRetryAt?: Date;
     failureReason?: string;
     entireSeries: boolean;
     scopeLabel: string;

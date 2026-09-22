@@ -217,12 +217,10 @@ export class MediaCleanupComponent implements OnInit {
                 item.canCancel &&
                 item.cleanup?.status === MediaCleanupStatus.ScheduledForDeletion)
             .sort((left, right) => {
-                const leftTime = left.cleanup?.scheduledForDeletionAt
-                    ? new Date(left.cleanup.scheduledForDeletionAt).getTime()
-                    : Number.MAX_SAFE_INTEGER;
-                const rightTime = right.cleanup?.scheduledForDeletionAt
-                    ? new Date(right.cleanup.scheduledForDeletionAt).getTime()
-                    : Number.MAX_SAFE_INTEGER;
+                const leftDueAt = left.cleanup?.nextRetryAt ?? left.cleanup?.scheduledForDeletionAt;
+                const rightDueAt = right.cleanup?.nextRetryAt ?? right.cleanup?.scheduledForDeletionAt;
+                const leftTime = leftDueAt ? new Date(leftDueAt).getTime() : Number.MAX_SAFE_INTEGER;
+                const rightTime = rightDueAt ? new Date(rightDueAt).getTime() : Number.MAX_SAFE_INTEGER;
                 return leftTime - rightTime;
             });
     }
@@ -477,8 +475,33 @@ export class MediaCleanupComponent implements OnInit {
         return `Deletes in ${days} day${days === 1 ? "" : "s"}`;
     }
 
-    public statusText(status: MediaCleanupStatus): string {
-        switch (status) {
+    public retryCountdown(date?: Date): string {
+        if (!date) {
+            return "Retry time pending";
+        }
+
+        const remainingMs = new Date(date).getTime() - Date.now();
+        if (remainingMs <= 0) {
+            return "Retry is due";
+        }
+
+        const hours = Math.ceil(remainingMs / (60 * 60 * 1000));
+        if (hours < 24) {
+            return `Retries in ${hours} hour${hours === 1 ? "" : "s"}`;
+        }
+
+        const days = Math.ceil(remainingMs / (24 * 60 * 60 * 1000));
+        return `Retries in ${days} day${days === 1 ? "" : "s"}`;
+    }
+
+    public statusText(cleanup: IMediaCleanupRequest): string {
+        if (cleanup.status === MediaCleanupStatus.ScheduledForDeletion && cleanup.nextRetryAt) {
+            return cleanup.externalDeletionCompletedAt
+                ? "Reconciliation retry pending"
+                : "Removal retry pending";
+        }
+
+        switch (cleanup.status) {
             case MediaCleanupStatus.Voting: return "Voting";
             case MediaCleanupStatus.PendingAdminApproval: return "Awaiting admin approval";
             case MediaCleanupStatus.ScheduledForDeletion: return "Scheduled for removal";

@@ -96,8 +96,8 @@ namespace Ombi.Api.External.ExternalApis.Sonarr
                 baseUrl,
                 HttpMethod.Delete);
             request.AddHeader("X-Api-Key", apiKey);
-            await Api.RequestContent(request);
-            return true;
+            using var response = await Api.Request(request);
+            return response.IsSuccessStatusCode;
         }
 
         public async Task<NewSeries> AddSeries(NewSeries seriesToAdd, string apiKey, string baseUrl)
@@ -152,8 +152,8 @@ namespace Ombi.Api.External.ExternalApis.Sonarr
         {
             var request = new Request($"{ApiBaseUrl}episodefile/{episodeFileId}", baseUrl, HttpMethod.Delete);
             request.AddHeader("X-Api-Key", apiKey);
-            await Api.RequestContent(request);
-            return true;
+            using var response = await Api.Request(request);
+            return response.IsSuccessStatusCode;
         }
 
         /// <summary>

@@ -207,8 +207,15 @@
                             <p class="metadata" *ngIf="item.requestedBy">Requested by {{ item.requestedBy }}</p>
                             <p class="metadata" *ngIf="item.cleanup?.origin === MediaCleanupOrigin.Community">{{ item.cleanup?.deleteVotes }} remove · {{ item.cleanup?.keepVotes }} keep</p>
                             <ng-container *ngTemplateOutlet="voterDetails; context: { $implicit: item }"></ng-container>
-                            <p class="scheduled-countdown" *ngIf="item.cleanup?.scheduledForDeletionAt">{{ scheduledRemovalCountdown(item.cleanup?.scheduledForDeletionAt) }}</p>
-                            <p class="metadata danger" *ngIf="item.cleanup?.scheduledForDeletionAt">Scheduled {{ item.cleanup?.scheduledForDeletionAt | date:'medium' }}</p>
+                            <ng-container *ngIf="item.cleanup?.nextRetryAt; else scheduledRemoval">
+                                <p class="scheduled-countdown">Retry {{ item.cleanup?.retryCount }} · {{ retryCountdown(item.cleanup?.nextRetryAt) }}</p>
+                                <p class="metadata danger">Next retry {{ item.cleanup?.nextRetryAt | date:'medium' }}</p>
+                                <p class="metadata" *ngIf="item.cleanup?.failureReason">{{ item.cleanup?.failureReason }}</p>
+                            </ng-container>
+                            <ng-template #scheduledRemoval>
+                                <p class="scheduled-countdown" *ngIf="item.cleanup?.scheduledForDeletionAt">{{ scheduledRemovalCountdown(item.cleanup?.scheduledForDeletionAt) }}</p>
+                                <p class="metadata danger" *ngIf="item.cleanup?.scheduledForDeletionAt">Scheduled {{ item.cleanup?.scheduledForDeletionAt | date:'medium' }}</p>
+                            </ng-template>
                             <div class="actions">
                                 <button mat-raised-button type="button" [disabled]="isItemBusy(item)" (click)="cancel(item)">
                                     <mat-icon>undo</mat-icon> Cancel deletion
@@ -341,7 +348,7 @@
                         <p class="metadata" *ngIf="cleanupEpisodeSelectionText(cleanup) as episodeScope">{{ episodeScope }}</p>
 
                         <div class="cleanup-status">
-                            <strong>{{ statusText(cleanup.status) }}</strong>
+                            <strong>{{ statusText(cleanup) }}</strong>
                             <span *ngIf="cleanup.origin === MediaCleanupOrigin.Community">
                                 {{ cleanup.deleteVotes }} remove · {{ cleanup.keepVotes }} keep
                             </span>
@@ -351,9 +358,15 @@
                         <p class="metadata" *ngIf="cleanup.votingEndsAt && cleanup.status === MediaCleanupStatus.Voting">
                             Voting ends {{ cleanup.votingEndsAt | date:'medium' }}
                         </p>
-                        <p class="metadata danger" *ngIf="cleanup.scheduledForDeletionAt">
-                            Scheduled for removal {{ cleanup.scheduledForDeletionAt | date:'medium' }}
+                        <p class="metadata danger" *ngIf="cleanup.nextRetryAt; else cleanupScheduledRemoval">
+                            Retry {{ cleanup.retryCount }} scheduled {{ cleanup.nextRetryAt | date:'medium' }}
                         </p>
+                        <ng-template #cleanupScheduledRemoval>
+                            <p class="metadata danger" *ngIf="cleanup.scheduledForDeletionAt">
+                                Scheduled for removal {{ cleanup.scheduledForDeletionAt | date:'medium' }}
+                            </p>
+                        </ng-template>
+                        <p class="metadata" *ngIf="cleanup.nextRetryAt && cleanup.failureReason">{{ cleanup.failureReason }}</p>
 
                         <ng-container *ngTemplateOutlet="voterDetails; context: { $implicit: item }"></ng-container>
 

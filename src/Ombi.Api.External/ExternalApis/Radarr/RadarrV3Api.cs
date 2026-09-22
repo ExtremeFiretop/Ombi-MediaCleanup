@@ -79,8 +79,8 @@ namespace Ombi.Api.External.ExternalApis.Radarr
                 baseUrl,
                 HttpMethod.Delete);
             AddHeaders(request, apiKey);
-            await Api.RequestContent(request);
-            return true;
+            using var response = await Api.Request(request);
+            return response.IsSuccessStatusCode;
         }
 
         public async Task<RadarrAddMovie> AddMovie(int tmdbId, string title, int year, int qualityId, string rootPath, string apiKey, string baseUrl, bool searchNow, string minimumAvailability, List<int> tags)

@@ -96,6 +96,13 @@ namespace Ombi.Settings.Settings.Models
         /// retryable without issuing the destructive external operation again.
         /// </summary>
         public DateTime? ExternalDeletionCompletedAt { get; set; }
+        /// <summary>
+        /// Consecutive transient failures in the current deletion/reconciliation phase.
+        /// Reset when a phase succeeds. Existing serialized records default to zero.
+        /// </summary>
+        public int RetryCount { get; set; }
+        public DateTime? LastFailureAt { get; set; }
+        public DateTime? NextRetryAt { get; set; }
         public DateTime? CompletedAt { get; set; }
         public string ApprovedByUserId { get; set; }
         public string FailureReason { get; set; }

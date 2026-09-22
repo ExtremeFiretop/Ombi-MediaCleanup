@@ -93,6 +93,10 @@ namespace Ombi.Core.Models.MediaCleanup
         public DateTime CreatedAt { get; set; }
         public DateTime? VotingEndsAt { get; set; }
         public DateTime? ScheduledForDeletionAt { get; set; }
+        public DateTime? ExternalDeletionCompletedAt { get; set; }
+        public int RetryCount { get; set; }
+        public DateTime? LastFailureAt { get; set; }
+        public DateTime? NextRetryAt { get; set; }
         public string FailureReason { get; set; }
         public bool EntireSeries { get; set; }
         public string ScopeLabel { get; set; }
