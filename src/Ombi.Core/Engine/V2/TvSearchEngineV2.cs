@@ -106,7 +106,7 @@ namespace Ombi.Core.Engine.V2
 
         private async Task PopulateMissingExternalIds(TvInfo show)
         {
-            show.ExternalIds ??= new ExternalIds();
+            show.ExternalIds ??= new Ombi.Api.External.ExternalApis.TheMovieDb.Models.ExternalIds();
 
             var hasImdbId = show.ExternalIds.ImdbId.HasValue();
             var hasTvDbId = int.TryParse(show.ExternalIds.TvDbId, out var tvDbId) && tvDbId > 0;
