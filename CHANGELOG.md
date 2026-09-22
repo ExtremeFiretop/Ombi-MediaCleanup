@@ -1,3 +1,12 @@
+## [4.60.57](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.56...v4.60.57) (2026-09-22)
+
+
+### Bug Fixes
+
+* **tv:** harden request identity and availability handling ([3b4126a](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/3b4126a76854da0679bcd9e05915954282bfaf4f))
+
+
+
 ## [4.60.56](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.55...v4.60.56) (2026-09-22)
 
 
@@ -213,15 +222,6 @@
 ### Bug Fixes
 
 * **emby:** remove stale records, harden played sync, keep provider-id-less series ([#5439](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5439)) ([fd44619](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/fd44619d84dc4b88235590672673bc9b48531e38))
-
-
-
-## [4.60.7](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.6...v4.60.7) (2026-07-01)
-
-
-### Bug Fixes
-
-* **emby:** make episode sync pagination deterministic and harden multi-episode fill ([#5438](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5438)) ([20aecdd](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/20aecdd1b7d9a00c65706ce240f9691774f5da6f))
 
 
 
