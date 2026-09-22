@@ -30,7 +30,7 @@ namespace Ombi.Core.Tests.Rule.Request
                 requestTheMovieDbId: 299939,
                 requestTvDbId: 0,
                 seasonNumber: 1,
-                episodeNumbers: 1, 2, 3);
+                episodeNumbers: new[] { 1, 2, 3 });
 
             var result = await new SonarrCacheRule(context).Execute(request);
 
@@ -73,7 +73,7 @@ namespace Ombi.Core.Tests.Rule.Request
                 requestTheMovieDbId: 299939,
                 requestTvDbId: 389492,
                 seasonNumber: 4,
-                episodeNumbers: 1, 2);
+                episodeNumbers: new[] { 1, 2 });
 
             var result = await new SonarrCacheRule(context).Execute(request);
 
