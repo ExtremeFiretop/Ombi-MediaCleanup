@@ -526,27 +526,6 @@ namespace Ombi.Core.Senders
 
         private async Task SendToSonarr(ChildRequests model, SonarrSeries result, SonarrSettings s, SonarrSendOptions options)
         {
-            // Check to ensure we have the all the seasons, ensure the Sonarr metadata has grabbed all the data
-            Season existingSeason = null;
-            foreach (var season in model.SeasonRequests)
-            {
-                var attempt = 0;
-                existingSeason = result.seasons.FirstOrDefault(x => x.seasonNumber == season.SeasonNumber);
-                while (existingSeason == null && attempt < 5)
-                {
-                    attempt++;
-                    Logger.LogInformation("There was no season numer {0} in Sonarr for title {1}. Will try again as the metadata did not get created", season.SeasonNumber, model.ParentRequest.Title);
-                    result = await SonarrApi.GetSeriesById(result.id, s.ApiKey, s.FullUri);
-                    existingSeason = result.seasons.FirstOrDefault(x => x.seasonNumber == season.SeasonNumber);
-                    await Task.Delay(500);
-                }
-
-                if (existingSeason == null)
-                {
-                    Logger.LogWarning("Unable to locate season number {SeasonNumber} in Sonarr for title {Title} after {Attempts} attempts. Skipping monitoring updates for this season.", season.SeasonNumber, model.ParentRequest.Title, attempt);
-                }
-            }
-
             // Does the show have the correct tags we are expecting
             if (options.Tags.Any())
             {
@@ -566,23 +545,90 @@ namespace Ombi.Core.Senders
                 result = await SonarrApi.UpdateSeries(result, s.ApiKey, s.FullUri);
             }
 
-            var episodesToUpdate = new List<Episode>();
-            // Ok, now let's sort out the episodes.
-            var sonarrEpisodes = await SonarrApi.GetEpisodes(result.id, s.ApiKey, s.FullUri);
-            var sonarrEpList = sonarrEpisodes.ToList() ?? new List<Episode>();
-            while (!sonarrEpList.Any())
+            // Sonarr can briefly return a series before its episode metadata is ready. Bound the
+            // wait so a bad Sonarr response cannot pin a request worker forever.
+            const int maxEpisodeMetadataAttempts = 20;
+            var episodeMetadataAttempt = 0;
+            var sonarrEpList = (await SonarrApi.GetEpisodes(result.id, s.ApiKey, s.FullUri))?.ToList()
+                ?? new List<Episode>();
+            while (!sonarrEpList.Any() && episodeMetadataAttempt < maxEpisodeMetadataAttempts)
             {
-                // It could be that the series metadata is not ready yet. So wait
-                sonarrEpList = (await SonarrApi.GetEpisodes(result.id, s.ApiKey, s.FullUri)).ToList();
+                episodeMetadataAttempt++;
                 await Task.Delay(500);
+                sonarrEpList = (await SonarrApi.GetEpisodes(result.id, s.ApiKey, s.FullUri))?.ToList()
+                    ?? new List<Episode>();
             }
 
+            if (!sonarrEpList.Any())
+            {
+                throw new InvalidOperationException(
+                    $"Sonarr returned no episode metadata for '{model.ParentRequest.Title}' after {maxEpisodeMetadataAttempts} retries.");
+            }
+
+            // Provider splits can expose an anthology season as a standalone TMDB show. Resolve
+            // the requested season to Sonarr by episode title/number before changing monitoring.
+            // Never mutate Ombi's stored season number; the mapping only applies to this send.
+            var seasonNumberMap = new Dictionary<int, int>();
             foreach (var season in model.SeasonRequests)
             {
+                var fingerprintMatch = SonarrEpisodeFingerprintMatcher.FindSingleSeasonMatch(season, sonarrEpList);
+                if (fingerprintMatch != null)
+                {
+                    seasonNumberMap[season.SeasonNumber] = fingerprintMatch.SonarrSeasonNumber;
+                    if (fingerprintMatch.SonarrSeasonNumber != season.SeasonNumber)
+                    {
+                        Logger.LogInformation(
+                            "Mapped requested season {SourceSeason} for {Title} to Sonarr season {SonarrSeason} using episode fingerprints",
+                            season.SeasonNumber, model.ParentRequest.Title, fingerprintMatch.SonarrSeasonNumber);
+                    }
+                    continue;
+                }
+
+                if (SonarrEpisodeFingerprintMatcher.HasConflictingExactSeason(season, sonarrEpList))
+                {
+                    throw new InvalidOperationException(
+                        $"Unable to safely map requested season {season.SeasonNumber} for '{model.ParentRequest.Title}' to the existing Sonarr series. " +
+                        "The same season number exists in Sonarr but its episode titles do not match, and no unique episode fingerprint match was found.");
+                }
+
+                seasonNumberMap[season.SeasonNumber] = season.SeasonNumber;
+            }
+
+            // Ensure every mapped season exists. This is mainly needed just after adding a new
+            // series, where the series record may appear before Sonarr finishes creating seasons.
+            Season existingSeason = null;
+            foreach (var season in model.SeasonRequests)
+            {
+                var targetSeasonNumber = seasonNumberMap[season.SeasonNumber];
+                var attempt = 0;
+                existingSeason = result.seasons?.FirstOrDefault(x => x.seasonNumber == targetSeasonNumber);
+                while (existingSeason == null && attempt < 5)
+                {
+                    attempt++;
+                    Logger.LogInformation(
+                        "There was no Sonarr season {SonarrSeason} for requested season {SourceSeason} in title {Title}. Will try again as the metadata may not be ready",
+                        targetSeasonNumber, season.SeasonNumber, model.ParentRequest.Title);
+                    result = await SonarrApi.GetSeriesById(result.id, s.ApiKey, s.FullUri);
+                    existingSeason = result.seasons?.FirstOrDefault(x => x.seasonNumber == targetSeasonNumber);
+                    await Task.Delay(500);
+                }
+
+                if (existingSeason == null)
+                {
+                    Logger.LogWarning(
+                        "Unable to locate Sonarr season {SonarrSeason} for requested season {SourceSeason} in title {Title} after {Attempts} attempts. Skipping monitoring updates for this season.",
+                        targetSeasonNumber, season.SeasonNumber, model.ParentRequest.Title, attempt);
+                }
+            }
+
+            var episodesToUpdate = new List<Episode>();
+            foreach (var season in model.SeasonRequests)
+            {
+                var targetSeasonNumber = seasonNumberMap[season.SeasonNumber];
                 foreach (var ep in season.Episodes)
                 {
                     var sonarrEp = sonarrEpList.FirstOrDefault(x =>
-                        x.episodeNumber == ep.EpisodeNumber && x.seasonNumber == season.SeasonNumber);
+                        x.episodeNumber == ep.EpisodeNumber && x.seasonNumber == targetSeasonNumber);
                     if (sonarrEp != null && !sonarrEp.monitored)
                     {
                         sonarrEp.monitored = true;
@@ -590,43 +636,52 @@ namespace Ombi.Core.Senders
                     }
                 }
 
-                existingSeason = result.seasons.FirstOrDefault(x => x.seasonNumber == season.SeasonNumber);
+                existingSeason = result.seasons?.FirstOrDefault(x => x.seasonNumber == targetSeasonNumber);
 
                 if (existingSeason == null)
                 {
-                    Logger.LogWarning("Season {SeasonNumber} still missing in Sonarr for title {Title}; skipping monitoring changes for this season.", season.SeasonNumber, model.ParentRequest.Title);
+                    Logger.LogWarning(
+                        "Sonarr season {SonarrSeason} for requested season {SourceSeason} is still missing for title {Title}; skipping monitoring changes for this season.",
+                        targetSeasonNumber, season.SeasonNumber, model.ParentRequest.Title);
                     continue;
                 }
 
-
-                // Make sure this season is set to monitored 
+                // Make sure this season is set to monitored. Sonarr monitors every episode when a
+                // season is enabled, so reset the season's episodes and then enable only the ones
+                // represented by the Ombi request.
                 if (!existingSeason.monitored)
                 {
-                    // We need to monitor it, problem being is all episodes will now be monitored
-                    // So we need to monitor the series but unmonitor every episode
                     existingSeason.monitored = true;
                     var sea = result.seasons.FirstOrDefault(x => x.seasonNumber == existingSeason.seasonNumber);
-                    sea.monitored = true;
+                    if (sea != null)
+                    {
+                        sea.monitored = true;
+                    }
 
                     result = await SonarrApi.UpdateSeries(result, s.ApiKey, s.FullUri);
                     var epToUnmonitored = new List<Episode>();
-                    var newEpList = sonarrEpList.ConvertAll(ep => new Episode(ep)); // Clone it so we don't modify the original member
-                    foreach (var ep in newEpList.Where(x => x.seasonNumber == existingSeason.seasonNumber).ToList())
+                    var newEpList = sonarrEpList.ConvertAll(ep => new Episode(ep));
+                    foreach (var ep in newEpList.Where(x => x.seasonNumber == existingSeason.seasonNumber))
                     {
                         ep.monitored = false;
                         epToUnmonitored.Add(ep);
                     }
 
-                    await SonarrApi.MonitorEpisode(epToUnmonitored.Select(x => x.id).ToArray(), false, s.ApiKey, s.FullUri);
+                    if (epToUnmonitored.Any())
+                    {
+                        await SonarrApi.MonitorEpisode(epToUnmonitored.Select(x => x.id).ToArray(), false, s.ApiKey, s.FullUri);
+                    }
                 }
             }
 
-            // Now update the episodes that need updating
-            await SonarrApi.MonitorEpisode(episodesToUpdate.Select(x => x.id).ToArray(), true, s.ApiKey, s.FullUri);
+            if (episodesToUpdate.Any())
+            {
+                await SonarrApi.MonitorEpisode(episodesToUpdate.Select(x => x.id).Distinct().ToArray(), true, s.ApiKey, s.FullUri);
+            }
 
             if (!s.AddOnly)
             {
-                await SearchForRequest(model, sonarrEpList, result, s, episodesToUpdate);
+                await SearchForRequest(model, sonarrEpList, result, s, episodesToUpdate, seasonNumberMap);
             }
         }
 
@@ -732,11 +787,14 @@ namespace Ombi.Core.Senders
         }
 
         private async Task SearchForRequest(ChildRequests model, IEnumerable<Episode> sonarrEpList, SonarrSeries existingSeries, SonarrSettings s,
-            IReadOnlyCollection<Episode> episodesToUpdate)
+            IReadOnlyCollection<Episode> episodesToUpdate, IReadOnlyDictionary<int, int> seasonNumberMap)
         {
             foreach (var season in model.SeasonRequests)
             {
-                var sonarrSeason = sonarrEpList.Where(x => x.seasonNumber == season.SeasonNumber);
+                var targetSeasonNumber = seasonNumberMap.TryGetValue(season.SeasonNumber, out var mappedSeason)
+                    ? mappedSeason
+                    : season.SeasonNumber;
+                var sonarrSeason = sonarrEpList.Where(x => x.seasonNumber == targetSeasonNumber);
                 var sonarrEpCount = sonarrSeason.Count();
                 var ourRequestCount = season.Episodes.Count;
 
@@ -745,12 +803,19 @@ namespace Ombi.Core.Senders
                 // Do a season search in both cases.
                 if (sonarrEpCount >= ourRequestCount)
                 {
-                    await SonarrApi.SeasonSearch(existingSeries.id, season.SeasonNumber, s.ApiKey, s.FullUri);
+                    await SonarrApi.SeasonSearch(existingSeries.id, targetSeasonNumber, s.ApiKey, s.FullUri);
                 }
                 else
                 {
-                    // There is a miss-match, let's search the episodes indiviaully 
-                    await SonarrApi.EpisodeSearch(episodesToUpdate.Select(x => x.id).ToArray(), s.ApiKey, s.FullUri);
+                    var requestedEpisodeIds = episodesToUpdate
+                        .Where(x => x.seasonNumber == targetSeasonNumber)
+                        .Select(x => x.id)
+                        .Distinct()
+                        .ToArray();
+                    if (requestedEpisodeIds.Any())
+                    {
+                        await SonarrApi.EpisodeSearch(requestedEpisodeIds, s.ApiKey, s.FullUri);
+                    }
                 }
             }
         }

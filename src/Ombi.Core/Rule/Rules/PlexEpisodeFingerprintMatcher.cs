@@ -47,20 +47,6 @@ namespace Ombi.Core.Rule.Rules
                 return null;
             }
 
-            if (restrictToSeriesId.HasValue)
-            {
-                // When the provider IDs already found the Plex series, keep the normal exact
-                // season-number behavior whenever that source season actually exists. Only try
-                // remapping when the season number itself is absent from the matched series.
-                var exactSeasonExists = await repository.GetAllEpisodes()
-                    .AnyAsync(x => x.Series.Id == restrictToSeriesId.Value &&
-                                   x.SeasonNumber == sourceSeason.SeasonNumber);
-                if (exactSeasonExists)
-                {
-                    return null;
-                }
-            }
-
             // Use the longest title as the anchor to reduce the number of candidate seasons we
             // need to inspect while keeping the final decision based on the full season fingerprint.
             var anchor = fingerprintEpisodes

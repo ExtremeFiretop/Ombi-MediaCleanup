@@ -66,14 +66,35 @@ namespace Ombi.Core.Tests.Rule.Search
                 "Carnival"
             };
 
-            var plexEpisodes = titles
+            var dahmerTitles = new[]
+            {
+                "Episode One",
+                "Please Don't Go",
+                "Doin' a Dahmer",
+                "The Good Boy Box",
+                "Blood on Their Hands",
+                "Silenced",
+                "Cassandra",
+                "Lionel",
+                "The Bogeyman",
+                "God of Forgiveness, God of Vengeance"
+            };
+
+            var plexEpisodes = dahmerTitles
                 .Select((title, index) => (IMediaServerEpisode)new PlexEpisode
+                {
+                    SeasonNumber = 1,
+                    EpisodeNumber = index + 1,
+                    Title = title,
+                    Series = plexSeries
+                })
+                .Concat(titles.Select((title, index) => (IMediaServerEpisode)new PlexEpisode
                 {
                     SeasonNumber = 4,
                     EpisodeNumber = index + 1,
                     Title = title,
                     Series = plexSeries
-                })
+                }))
                 .ToList();
             plexSeries.Episodes = plexEpisodes;
 
