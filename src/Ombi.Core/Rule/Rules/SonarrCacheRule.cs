@@ -28,14 +28,17 @@ namespace Ombi.Core.Rule.Rules
                 var vm = (ChildRequests) obj;
                 if (vm.SeasonRequests.Any())
                 {
-                    var requestTheMovieDbId = vm.RequestTheMovieDbId > 0
-                        ? vm.RequestTheMovieDbId
-                        : vm.Id;
                     var requestTvDbId = vm.RequestTvDbId;
 
-                    // Sonarr is TVDB-centric and older cache rows commonly have TheMovieDbId = 0.
-                    // Never query either cache with a zero provider ID: doing so groups unrelated
-                    // series together and can incorrectly remove every episode from a new request.
+                    // Sonarr is TVDB-centric. Do not fall back to TMDB for request-time episode
+                    // deduplication: Sonarr can expose an anthology parent with the same TMDB ID
+                    // as a standalone TMDB season while using different season numbering. Without
+                    // episode-title metadata in SonarrEpisodeCache, a TMDB-only match cannot prove
+                    // that source S1 is the same as Sonarr S1. A false negative is safer here than
+                    // rejecting or mutating the wrong anthology request.
+                    //
+                    // Also never interpret ChildRequests.Id as a provider ID. It is the database
+                    // primary key and is intentionally separate from RequestTheMovieDbId.
                     var monitoredEpisodes = new HashSet<(int SeasonNumber, int EpisodeNumber)>();
 
                     if (requestTvDbId > 0)
@@ -47,19 +50,6 @@ namespace Ombi.Core.Rule.Rules
                             .ToListAsync();
                         monitoredEpisodes.UnionWith(
                             tvDbEpisodes.Select(x => (x.SeasonNumber, x.EpisodeNumber)));
-                    }
-
-                    // Fall back to TMDB only when it is a real provider ID and TVDB did not yield
-                    // any cached episodes. This keeps compatibility with newer Sonarr cache rows.
-                    if (monitoredEpisodes.Count == 0 && requestTheMovieDbId > 0)
-                    {
-                        var movieDbEpisodes = await _ctx.SonarrEpisodeCache
-                            .AsNoTracking()
-                            .Where(x => x.MovieDbId == requestTheMovieDbId)
-                            .Select(x => new { x.SeasonNumber, x.EpisodeNumber })
-                            .ToListAsync();
-                        monitoredEpisodes.UnionWith(
-                            movieDbEpisodes.Select(x => (x.SeasonNumber, x.EpisodeNumber)));
                     }
 
                     if (monitoredEpisodes.Count > 0)
