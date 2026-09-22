@@ -1,3 +1,7 @@
+## [4.60.55](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.54...v4.60.55) (2026-09-22)
+
+
+
 ## [4.60.54](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.53...v4.60.54) (2026-09-22)
 
 
@@ -217,10 +221,6 @@
 ### Bug Fixes
 
 * **dvr:** reset auto-increment in a database-provider-aware way ([#5436](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5436)) ([968aeb3](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/968aeb3ed851a07929c3859258a01a434d6bbd56)), closes [#5435](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5435) [#5435](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5435)
-
-
-
-## [4.60.5](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.4...v4.60.5) (2026-06-15)
 
 
 
