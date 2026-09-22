@@ -211,9 +211,6 @@ namespace Ombi.Core.Engine
                         }
                     }
 
-                // Remove the ID since this is a new child
-                // This was a TVDBID for the request rules to run
-                tvBuilder.ChildRequest.Id = 0;
                 if (!tvBuilder.ChildRequest.SeasonRequests.Any())
                 {
                     // Looks like we have removed them all! They were all duplicates...
@@ -335,11 +332,14 @@ namespace Ombi.Core.Engine
 
             var ruleResults = await RunRequestRules(tvBuilder.ChildRequest);
             var results = ruleResults as RuleResult[] ?? ruleResults.ToArray();
-            if (results.Any(x => !x.Success))
+            var ruleResultInError = results.FirstOrDefault(x => !x.Success);
+            if (ruleResultInError != null)
             {
                 return new RequestEngineResult
                 {
-                    ErrorMessage = results.FirstOrDefault(x => !string.IsNullOrEmpty(x.Message)).Message
+                    ErrorMessage = results.FirstOrDefault(x => !x.Success && !string.IsNullOrEmpty(x.Message))?.Message
+                        ?? ruleResultInError.Message,
+                    ErrorCode = ruleResultInError.ErrorCode
                 };
             }
 
@@ -356,7 +356,24 @@ namespace Ombi.Core.Engine
                 }
             }
 
-            var existingRequest = await TvRepository.Get().FirstOrDefaultAsync(x => x.ExternalProviderId == tv.TheMovieDbId);
+            var requestTvDbId = tvBuilder.ChildRequest.RequestTvDbId;
+            var requestImdbId = tvBuilder.ChildRequest.RequestImdbId;
+
+            // Prefer an exact TMDB parent before considering stable alternate-id aliases.
+            // Existing databases can already contain duplicate parents from an earlier TMDB id
+            // change, so deterministic precedence prevents new children attaching arbitrarily.
+            var existingRequest = await TvRepository.Get()
+                .FirstOrDefaultAsync(x => x.ExternalProviderId == tv.TheMovieDbId);
+            if (existingRequest == null && requestTvDbId > 0)
+            {
+                existingRequest = await TvRepository.Get()
+                    .FirstOrDefaultAsync(x => x.TvDbId == requestTvDbId);
+            }
+            if (existingRequest == null && !string.IsNullOrEmpty(requestImdbId))
+            {
+                existingRequest = await TvRepository.Get()
+                    .FirstOrDefaultAsync(x => x.ImdbId == requestImdbId);
+            }
             if (existingRequest != null)
             {
                 // Remove requests we already have, we just want new ones
@@ -385,9 +402,6 @@ namespace Ombi.Core.Engine
                         }
                     }
 
-                // Remove the ID since this is a new child
-                // This was a TVDBID for the request rules to run
-                tvBuilder.ChildRequest.Id = 0;
                 if (!tvBuilder.ChildRequest.SeasonRequests.Any())
                 {
                     // Looks like we have removed them all! They were all duplicates...

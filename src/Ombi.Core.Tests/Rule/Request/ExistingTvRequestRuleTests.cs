@@ -190,6 +190,60 @@ namespace Ombi.Core.Tests.Rule.Request
             Assert.That(req.SeasonRequests.Single().Episodes.Select(x => x.EpisodeNumber), Is.EqualTo(new[] { 3 }));
         }
 
+
+        [Test]
+        public async Task RequestShow_MatchesExistingRequestByImdb_WhenTmdbIdChanges()
+        {
+            var childRequests = new List<ChildRequests>
+            {
+                new ChildRequests
+                {
+                    ParentRequest = new TvRequests
+                    {
+                        ExternalProviderId = 299939,
+                        ImdbId = "tt13207736"
+                    },
+                    SeasonRequests = new List<SeasonRequests>
+                    {
+                        new SeasonRequests
+                        {
+                            SeasonNumber = 1,
+                            Episodes = new List<EpisodeRequests>
+                            {
+                                new EpisodeRequests { EpisodeNumber = 1 }
+                            }
+                        }
+                    }
+                }
+            };
+            TvRequestRepo.Setup(x => x.GetChild()).Returns(childRequests.AsQueryable().BuildMock());
+            TvRequestRepo.Setup(x => x.CleanupOrphanedRequestData()).ReturnsAsync(0);
+
+            var req = new ChildRequests
+            {
+                RequestType = RequestType.TvShow,
+                RequestTheMovieDbId = 335840,
+                RequestImdbId = "tt13207736",
+                Title = "Monster",
+                SeasonRequests = new List<SeasonRequests>
+                {
+                    new SeasonRequests
+                    {
+                        SeasonNumber = 1,
+                        Episodes = new List<EpisodeRequests>
+                        {
+                            new EpisodeRequests { EpisodeNumber = 1 }
+                        }
+                    }
+                }
+            };
+
+            var result = await Rule.Execute(req);
+
+            Assert.That(result.Success, Is.False);
+            Assert.That(result.ErrorCode, Is.EqualTo(Ombi.Core.Engine.ErrorCode.EpisodesAlreadyRequested));
+        }
+
         [Test]
         public async Task RequestShow_NewSeasonRequest_IsSuccessful()
         {

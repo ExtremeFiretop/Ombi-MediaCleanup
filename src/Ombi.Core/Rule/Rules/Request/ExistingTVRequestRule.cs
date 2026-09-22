@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -35,8 +36,18 @@ namespace Ombi.Core.Rule.Rules.Request
                 // instead of requiring another delete operation first.
                 await Tv.CleanupOrphanedRequestData();
 
+                var requestTheMovieDbId = tv.RequestTheMovieDbId > 0 ? tv.RequestTheMovieDbId : tv.Id;
+                var requestTvDbId = tv.RequestTvDbId;
+                var requestImdbId = tv.RequestImdbId;
+                var hasTheMovieDbId = requestTheMovieDbId > 0;
+                var hasTvDbId = requestTvDbId > 0;
+                var hasImdbId = !string.IsNullOrEmpty(requestImdbId);
+
                 var currentRequests = await Tv.GetChild()
-                    .Where(x => x.ParentRequest.ExternalProviderId == tv.Id) // the Id on the child is TheMovieDb at this point
+                    .Where(x =>
+                        (hasTheMovieDbId && x.ParentRequest.ExternalProviderId == requestTheMovieDbId) ||
+                        (hasTvDbId && x.ParentRequest.TvDbId == requestTvDbId) ||
+                        (hasImdbId && x.ParentRequest.ImdbId == requestImdbId))
                     .ToListAsync();
                 if (currentRequests.Count == 0)
                 {

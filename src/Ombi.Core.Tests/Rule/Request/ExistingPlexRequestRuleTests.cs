@@ -135,6 +135,57 @@ namespace Ombi.Core.Tests.Rule.Request
             Assert.That(episodes.First().EpisodeNumber == 3, "We removed the wrong episode");
         }
 
+
+        [Test]
+        public async Task RequestShow_MatchesPlexContentByImdb_WhenTmdbIdChanges()
+        {
+            var content = new List<PlexServerContent>
+            {
+                new PlexServerContent
+                {
+                    Type = MediaType.Series,
+                    TheMovieDbId = "299939",
+                    ImdbId = "tt13207736",
+                    Title = "Monster (2022)",
+                    ReleaseYear = "2022",
+                    Episodes = new List<IMediaServerEpisode>
+                    {
+                        new PlexEpisode
+                        {
+                            SeasonNumber = 1,
+                            EpisodeNumber = 1
+                        }
+                    }
+                }
+            };
+            PlexContentRepo.Setup(x => x.GetAll()).Returns(content.AsQueryable().BuildMock());
+
+            var req = new ChildRequests
+            {
+                RequestType = RequestType.TvShow,
+                RequestTheMovieDbId = 335840,
+                RequestImdbId = "tt13207736",
+                Title = "Monster",
+                ReleaseYear = new System.DateTime(2022, 9, 21),
+                SeasonRequests = new List<SeasonRequests>
+                {
+                    new SeasonRequests
+                    {
+                        SeasonNumber = 1,
+                        Episodes = new List<EpisodeRequests>
+                        {
+                            new EpisodeRequests { EpisodeNumber = 1 }
+                        }
+                    }
+                }
+            };
+
+            var result = await Rule.Execute(req);
+
+            Assert.That(result.Success, Is.False);
+            Assert.That(result.ErrorCode, Is.EqualTo(ErrorCode.EpisodesAlreadyRequested));
+        }
+
         [Test]
         public async Task RequestShow_NewSeasonRequest_IsSuccessful()
         {

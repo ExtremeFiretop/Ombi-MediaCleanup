@@ -49,11 +49,17 @@ namespace Ombi.Core.Helpers
             if (!int.TryParse(TheMovieDbRecord.ExternalIds?.TvDbId, out var tvdbId) || tvdbId <= 0)
             {
                 var externalIds = await MovieDbApi.GetTvExternals(id);
-                if (externalIds?.tvdb_id > 0)
+                if (externalIds != null)
                 {
                     TheMovieDbRecord.ExternalIds ??= new ExternalIds();
-                    TheMovieDbRecord.ExternalIds.TvDbId = externalIds.tvdb_id.ToString();
 
+                    if (externalIds.tvdb_id > 0)
+                    {
+                        TheMovieDbRecord.ExternalIds.TvDbId = externalIds.tvdb_id.ToString();
+                    }
+
+                    // Keep any stable IMDb identity even when TMDB still has no TVDB mapping.
+                    // Duplicate/content rules can use it to recognize provider-id aliases.
                     if (string.IsNullOrEmpty(TheMovieDbRecord.ExternalIds.ImdbId) &&
                         !string.IsNullOrEmpty(externalIds.imdb_id))
                     {
@@ -86,10 +92,13 @@ namespace Ombi.Core.Helpers
         {
             var animationGenre = TheMovieDbRecord.genres?.Any(s => s.name.Equals("Animation", StringComparison.InvariantCultureIgnoreCase)) ?? false;
             var animeKeyword = TheMovieDbRecord.Keywords?.KeywordsValue?.Any(s => s.Name.Equals("Anime", StringComparison.InvariantCultureIgnoreCase)) ?? false;
+            int.TryParse(TheMovieDbRecord.ExternalIds?.TvDbId, out var tvDbId);
             ChildRequest = new ChildRequests
             {
-                Id = model.TheMovieDbId, // This is set to 0 after the request rules have run, the request rules needs it to identify the request
                 RequestType = RequestType.TvShow,
+                RequestTheMovieDbId = model.TheMovieDbId,
+                RequestTvDbId = tvDbId,
+                RequestImdbId = TheMovieDbRecord.ExternalIds?.ImdbId ?? string.Empty,
                 RequestedDate = DateTime.UtcNow,
                 Approved = false,
                 RequestedUserId = userId,

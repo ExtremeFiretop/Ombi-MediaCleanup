@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations.Schema;
+using Newtonsoft.Json;
 using Ombi.Store.Repository.Requests;
 
 namespace Ombi.Store.Entities.Requests
@@ -26,6 +27,21 @@ namespace Ombi.Store.Entities.Requests
 
         [NotMapped]
         public DateTime ReleaseYear { get; set; } // Used in the ExistingPlexRequestRule.cs
+
+        // Request-time provider identities used by the duplicate/content rules before this child
+        // has been persisted. Keep these separate from Entity.Id so a provider id can never be
+        // accidentally written as the ChildRequests primary key.
+        [NotMapped]
+        [JsonIgnore]
+        public int RequestTheMovieDbId { get; set; }
+
+        [NotMapped]
+        [JsonIgnore]
+        public int RequestTvDbId { get; set; }
+
+        [NotMapped]
+        [JsonIgnore]
+        public string RequestImdbId { get; set; }
 
         [ForeignKey(nameof(IssueId))]
         public List<Issues> Issues { get; set; }
