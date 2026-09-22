@@ -33,9 +33,7 @@ namespace Ombi.Core.Rule.Rules.Request
             {
                 var tvRequest = (ChildRequests) obj;
 
-                var requestTheMovieDbId = tvRequest.RequestTheMovieDbId > 0
-                    ? tvRequest.RequestTheMovieDbId
-                    : tvRequest.Id;
+                var requestTheMovieDbId = tvRequest.RequestTheMovieDbId;
                 var requestTheMovieDbIdString = requestTheMovieDbId > 0
                     ? requestTheMovieDbId.ToString()
                     : string.Empty;

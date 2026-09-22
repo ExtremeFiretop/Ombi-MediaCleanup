@@ -82,6 +82,7 @@ namespace Ombi.Core.Tests.Rule.Request
                     }
                 },
                 Id = 1,
+                RequestTheMovieDbId = 1,
             };
             var result = await Rule.Execute(req);
 
@@ -124,6 +125,7 @@ namespace Ombi.Core.Tests.Rule.Request
                     }
                 },
                 Id = 1,
+                RequestTheMovieDbId = 1,
             };
             var result = await Rule.Execute(req);
 
@@ -291,10 +293,40 @@ namespace Ombi.Core.Tests.Rule.Request
                     }
                 },
                 Id = 1,
+                RequestTheMovieDbId = 1,
             };
             var result = await Rule.Execute(req);
 
             Assert.That(result.Success, Is.True);
+        }
+
+        [Test]
+        public async Task RequestShow_DatabaseIdIsNotUsedAsTmdbFallback()
+        {
+            SetupMockData();
+
+            var req = new ChildRequests
+            {
+                RequestType = RequestType.TvShow,
+                Id = 1,
+                RequestTheMovieDbId = 0,
+                SeasonRequests = new List<SeasonRequests>
+                {
+                    new SeasonRequests
+                    {
+                        SeasonNumber = 1,
+                        Episodes = new List<EpisodeRequests>
+                        {
+                            new EpisodeRequests { EpisodeNumber = 1 }
+                        }
+                    }
+                }
+            };
+
+            var result = await Rule.Execute(req);
+
+            Assert.That(result.Success, Is.True);
+            Assert.That(req.SeasonRequests[0].Episodes, Has.Count.EqualTo(1));
         }
 
         [Test]

@@ -73,20 +73,23 @@ namespace Ombi.Core.Engine.V2
                 return null;
             }
 
-            if (!show.Images?.Posters?.Any() ?? false && !string.Equals(langCode, "en", StringComparison.OrdinalIgnoreCase))
+            if (!(show.Images?.Posters?.Any() ?? false) && !string.Equals(langCode, "en", StringComparison.OrdinalIgnoreCase))
             {
                 // There's no regional assets for this, so 
                 // lookup the en-us version to get them
                 var enShow = await Cache.GetOrAddAsync(nameof(GetShowInformation) + "en" + tvdbid,
                     async () => await _movieApi.GetTVInfo(tvdbid, "en"), DateTimeOffset.Now.AddHours(12));
 
-                // For some of the more obsecure cases
-                if (!show.overview.HasValue())
+                if (enShow != null)
                 {
-                    show.overview = enShow.overview;
-                }
+                    // For some of the more obsecure cases
+                    if (!show.overview.HasValue())
+                    {
+                        show.overview = enShow.overview;
+                    }
 
-                show.Images = enShow.Images;
+                    show.Images = enShow.Images;
+                }
             }
 
             await PopulateMissingExternalIds(show);

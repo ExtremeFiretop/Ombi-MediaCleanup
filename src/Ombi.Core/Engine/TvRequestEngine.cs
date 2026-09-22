@@ -162,11 +162,14 @@ namespace Ombi.Core.Engine
 
             var ruleResults = await RunRequestRules(tvBuilder.ChildRequest);
             var results = ruleResults as RuleResult[] ?? ruleResults.ToArray();
-            if (results.Any(x => !x.Success))
+            var ruleResultInError = results.FirstOrDefault(x => !x.Success);
+            if (ruleResultInError != null)
             {
                 return new RequestEngineResult
                 {
-                    ErrorMessage = results.FirstOrDefault(x => !string.IsNullOrEmpty(x.Message)).Message
+                    ErrorMessage = results.FirstOrDefault(x => !x.Success && !string.IsNullOrEmpty(x.Message))?.Message
+                        ?? ruleResultInError.Message,
+                    ErrorCode = ruleResultInError.ErrorCode
                 };
             }
 
@@ -1119,7 +1122,7 @@ namespace Ombi.Core.Engine
             var sub = _subscriptionRepository.GetAll();
             var childIds = childRequests.Select(x => x.Id);
             var relevantSubs = await sub.Where(s =>
-                s.UserId == shouldHide.UserId && childIds.Contains(s.Id) && s.RequestType == RequestType.TvShow).ToListAsync();
+                s.UserId == shouldHide.UserId && childIds.Contains(s.RequestId) && s.RequestType == RequestType.TvShow).ToListAsync();
             foreach (var x in childRequests)
             {
                 if (shouldHide.UserId == x.RequestedUserId)
@@ -1146,14 +1149,19 @@ namespace Ombi.Core.Engine
 
         private void CheckForPlayed(HideResult shouldHide, List<ChildRequests> childRequests)
         {
-            var theMovieDbIds = childRequests.Select(x => x.Id);
             foreach (var request in childRequests)
             {
                 var requestedEpisodes = GetEpisodesKeys(request);
+                var theMovieDbId = request.ParentRequest?.ExternalProviderId ?? 0;
+                if (theMovieDbId <= 0)
+                {
+                    request.RequestedUserPlayedProgress = 0;
+                    continue;
+                }
 
                 var playedEpisodes = _userPlayedEpisodeRepository
                     .GetAll()
-                    .Where(x => x.TheMovieDbId == request.Id && x.UserId == request.RequestedUserId)
+                    .Where(x => x.TheMovieDbId == theMovieDbId && x.UserId == request.RequestedUserId)
                     .AsEnumerable()
                     .Join(requestedEpisodes,
                         played => new { played.SeasonNumber, played.EpisodeNumber },

@@ -113,5 +113,69 @@ namespace Ombi.Core.Tests.Engine.V2
             mocker.GetMock<IMovieDbApi>()
                 .Verify(x => x.GetTvExternals(299939), Times.Once);
         }
+        [Test]
+        public async Task GetShowInformation_MissingRegionalImagesAndMissingEnglishFallback_DoesNotThrow()
+        {
+            var mocker = new AutoMocker();
+            var user = new OmbiUser { Id = "user-1", Language = "fr" };
+            var userManager = MockHelper.MockUserManager(new List<OmbiUser> { user });
+            mocker.Use(userManager.Object);
+
+            mocker.GetMock<ICurrentUser>()
+                .Setup(x => x.GetUser())
+                .ReturnsAsync(user);
+
+            var mapperConfig = new MapperConfiguration(cfg => cfg.AddProfile<TvProfileV2>());
+            mocker.Use(mapperConfig.CreateMapper());
+
+            mocker.GetMock<ICacheService>()
+                .Setup(x => x.GetOrAddAsync(
+                    It.IsAny<string>(),
+                    It.IsAny<Func<Task<TvInfo>>>(),
+                    It.IsAny<DateTimeOffset>()))
+                .Returns((string cacheKey, Func<Task<TvInfo>> factory, DateTimeOffset expiration) => factory());
+
+            mocker.GetMock<IMovieDbApi>()
+                .Setup(x => x.GetTVInfo("12345", "fr"))
+                .ReturnsAsync(new TvInfo
+                {
+                    id = 12345,
+                    name = "Test Show",
+                    overview = string.Empty,
+                    first_air_date = "2024-01-01",
+                    seasons = new List<Season>(),
+                    networks = new[] { new Network { id = 1, name = "Test Network" } },
+                    episode_run_time = Array.Empty<int>(),
+                    genres = Array.Empty<Genre>(),
+                    Credits = new Credits
+                    {
+                        cast = Array.Empty<FullMovieCast>(),
+                        crew = Array.Empty<FullMovieCrew>()
+                    },
+                    Videos = new Videos { results = Array.Empty<Result>() },
+                    Images = null,
+                    ExternalIds = new ExternalIds
+                    {
+                        ImdbId = "tt1234567",
+                        TvDbId = "7654321"
+                    }
+                });
+
+            mocker.GetMock<IMovieDbApi>()
+                .Setup(x => x.GetTVInfo("12345", "en"))
+                .ReturnsAsync((TvInfo)null);
+
+            mocker.GetMock<IRuleEvaluator>()
+                .Setup(x => x.StartSearchRules(It.IsAny<SearchViewModel>()))
+                .ReturnsAsync(new[] { new RuleResult { Success = true } });
+
+            var subject = mocker.CreateInstance<TvSearchEngineV2>();
+            var result = await subject.GetShowInformation("12345", CancellationToken.None);
+
+            Assert.That(result, Is.Not.Null);
+            mocker.GetMock<IMovieDbApi>()
+                .Verify(x => x.GetTVInfo("12345", "en"), Times.Once);
+        }
+
     }
 }
