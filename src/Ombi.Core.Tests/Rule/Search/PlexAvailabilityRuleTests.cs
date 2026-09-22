@@ -136,5 +136,74 @@ namespace Ombi.Core.Tests.Rule.Search
             Assert.That(search.SeasonRequests[0].SeasonAvailable, Is.True);
             Assert.That(search.SeasonRequests[0].Episodes.All(x => x.Available), Is.True);
         }
+        [Test]
+        public async Task TvShow_DuplicateProviderIdRows_OnlyUsesEpisodesFromMatchedContentRow()
+        {
+            var matchedSeries = new PlexServerContent
+            {
+                Id = 100,
+                Type = MediaType.Series,
+                Title = "Matched Series",
+                TheMovieDbId = "12345",
+                Url = "http://plex/matched"
+            };
+            var duplicateSeries = new PlexServerContent
+            {
+                Id = 200,
+                Type = MediaType.Series,
+                Title = "Stale Duplicate",
+                TheMovieDbId = "12345",
+                Url = "http://plex/duplicate"
+            };
+
+            var duplicateEpisode = new PlexEpisode
+            {
+                SeasonNumber = 1,
+                EpisodeNumber = 1,
+                Title = "Pilot",
+                Series = duplicateSeries
+            };
+
+            matchedSeries.Episodes = new List<IMediaServerEpisode>();
+            duplicateSeries.Episodes = new List<IMediaServerEpisode> { duplicateEpisode };
+
+            PlexContentRepo
+                .Setup(x => x.GetByType("12345", ProviderType.TheMovieDbId, MediaType.Series))
+                .ReturnsAsync(matchedSeries);
+            PlexContentRepo.Setup(x => x.GetAllEpisodes())
+                .Returns(new List<IMediaServerEpisode> { duplicateEpisode }.AsQueryable().BuildMock());
+            PlexContentRepo.Setup(x => x.GetAll())
+                .Returns(new List<PlexServerContent> { matchedSeries, duplicateSeries }.AsQueryable().BuildMock());
+
+            var search = new SearchTvShowViewModel
+            {
+                Id = 12345,
+                TheMovieDbId = "12345",
+                Title = "Matched Series",
+                SeasonRequests = new List<SeasonRequests>
+                {
+                    new SeasonRequests
+                    {
+                        SeasonNumber = 1,
+                        Episodes = new List<EpisodeRequests>
+                        {
+                            new EpisodeRequests
+                            {
+                                EpisodeNumber = 1,
+                                Title = "Pilot",
+                                AirDate = System.DateTime.Today.AddDays(-1)
+                            }
+                        }
+                    }
+                }
+            };
+
+            var result = await Rule.Execute(search);
+
+            Assert.That(result.Success, Is.True);
+            Assert.That(search.SeasonRequests[0].Episodes[0].Available, Is.False);
+            Assert.That(search.FullyAvailable, Is.False);
+        }
+
     }
 }
