@@ -110,10 +110,21 @@ namespace Ombi.Schedule.Jobs.Sonarr
                     }
                     else
                     {
-                        var findResult = await _movieDbApi.Find(id.TvDbId.ToString(), ExternalSource.tvdb_id);
+                        FindResult findResult = null;
+
+                        if (id.TvDbId > 0)
+                        {
+                            findResult = await _movieDbApi.Find(id.TvDbId.ToString(), ExternalSource.tvdb_id);
+                        }
+
+                        if (findResult?.tv_results?.Any() != true && !string.IsNullOrWhiteSpace(id.ImdbId))
+                        {
+                            findResult = await _movieDbApi.Find(id.ImdbId, ExternalSource.imdb_id);
+                        }
+
                         if (findResult?.tv_results?.Any() == true)
                         {
-                            cache.TheMovieDbId = findResult.tv_results.FirstOrDefault()?.id ?? -1;
+                            cache.TheMovieDbId = findResult.tv_results.FirstOrDefault()?.id ?? 0;
                             id.MovieDbId = cache.TheMovieDbId;
                         }
                     }
