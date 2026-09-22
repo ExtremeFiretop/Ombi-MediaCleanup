@@ -68,17 +68,17 @@ namespace Ombi.Core.Rule.Rules.Request
 
                 if (providerIdMatch != null)
                 {
-                    var fingerprintMatch = await PlexEpisodeFingerprintMatcher.FindSingleSeasonMatch(
+                    var providerFingerprintMatch = await PlexEpisodeFingerprintMatcher.FindSingleSeasonMatch(
                         _plexContent,
                         tvRequest.SeasonRequests,
                         providerIdMatch.Id);
-                    if (fingerprintMatch != null)
+                    if (providerFingerprintMatch != null)
                     {
                         return CheckExistingContent(
                             tvRequest,
                             providerIdMatch,
-                            fingerprintMatch.SourceSeasonNumber,
-                            fingerprintMatch.PlexSeasonNumber);
+                            providerFingerprintMatch.SourceSeasonNumber,
+                            providerFingerprintMatch.PlexSeasonNumber);
                     }
 
                     return CheckExistingContent(tvRequest, providerIdMatch);
@@ -91,17 +91,17 @@ namespace Ombi.Core.Rule.Rules.Request
                     && x.ReleaseYear == tvRequest.ReleaseYear.Year.ToString());
                 if (titleAndYearMatch != null)
                 {
-                    var fingerprintMatch = await PlexEpisodeFingerprintMatcher.FindSingleSeasonMatch(
+                    var titleFingerprintMatch = await PlexEpisodeFingerprintMatcher.FindSingleSeasonMatch(
                         _plexContent,
                         tvRequest.SeasonRequests,
                         titleAndYearMatch.Id);
-                    if (fingerprintMatch != null)
+                    if (titleFingerprintMatch != null)
                     {
                         return CheckExistingContent(
                             tvRequest,
                             titleAndYearMatch,
-                            fingerprintMatch.SourceSeasonNumber,
-                            fingerprintMatch.PlexSeasonNumber);
+                            titleFingerprintMatch.SourceSeasonNumber,
+                            titleFingerprintMatch.PlexSeasonNumber);
                     }
 
                     return CheckExistingContent(tvRequest, titleAndYearMatch);
