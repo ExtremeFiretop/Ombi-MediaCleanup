@@ -24,6 +24,7 @@ using Ombi.Core.Settings;
 using Ombi.Settings.Settings.Models;
 using Ombi.Store.Entities.Requests;
 using Ombi.Store.Repository;
+using Ombi.Store.Repository.Requests;
 using Ombi.Core.Models;
 using System.Threading;
 using Microsoft.Extensions.Logging;
