@@ -1,3 +1,7 @@
+## [4.60.59](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.58...v4.60.59) (2026-09-22)
+
+
+
 ## [4.60.58](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.57...v4.60.58) (2026-09-22)
 
 
@@ -216,15 +220,6 @@
 ### Bug Fixes
 
 * resolve discover card details and action visibility on mobile touch devices ([#5442](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5442)) ([550af0c](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/550af0c3d208d6e4d6d04c34831f72b0c02f67cb))
-
-
-
-## [4.60.9](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/compare/v4.60.8...v4.60.9) (2026-07-06)
-
-
-### Bug Fixes
-
-* **watchlist:** debounce Plex watchlist history pruning to stop re-requests ([#5427](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5427)) ([#5440](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/issues/5440)) ([05bf8f8](https://github.com/ExtremeFiretop/Ombi-MediaCleanup/commit/05bf8f8693e811377cdbea0f1c84da6eb40da912))
 
 
 
