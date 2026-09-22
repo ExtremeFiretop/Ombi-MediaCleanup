@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using Moq;
 using NUnit.Framework;
@@ -68,6 +69,146 @@ namespace Ombi.Core.Tests
 
             Assert.That(result.ChildRequest.RequestTvDbId, Is.Zero);
             Assert.That(result.ChildRequest.RequestImdbId, Is.EqualTo("tt13207736"));
+        }
+
+
+        [Test]
+        public async Task BuildEpisodes_CustomRequest_OnlyLoadsRequestedSeasons()
+        {
+            var movieDb = new Mock<IMovieDbApi>();
+            movieDb.Setup(x => x.GetTVInfo("12345", "en")).ReturnsAsync(new TvInfo
+            {
+                id = 12345,
+                name = "Test Show",
+                first_air_date = "2024-01-01",
+                seasons = new List<Season>
+                {
+                    new Season { season_number = 1 },
+                    new Season { season_number = 2 },
+                    new Season { season_number = 3 }
+                },
+                ExternalIds = new ExternalIds { TvDbId = "54321" }
+            });
+            movieDb.Setup(x => x.GetSeasonEpisodes(12345, 2, It.IsAny<CancellationToken>(), It.IsAny<string>()))
+                .ReturnsAsync(new SeasonDetails
+                {
+                    season_number = 2,
+                    episodes = new[]
+                    {
+                        new Episode { season_number = 2, episode_number = 1, name = "Requested Episode" },
+                        new Episode { season_number = 2, episode_number = 2, name = "Not Requested" }
+                    }
+                });
+
+            var request = new TvRequestViewModelV2
+            {
+                TheMovieDbId = 12345,
+                Seasons = new List<SeasonsViewModel>
+                {
+                    new SeasonsViewModel
+                    {
+                        SeasonNumber = 2,
+                        Episodes = new List<EpisodesViewModel>
+                        {
+                            new EpisodesViewModel { EpisodeNumber = 1 }
+                        }
+                    }
+                }
+            };
+
+            var subject = await new TvShowRequestBuilderV2(movieDb.Object).GetShowInfo(12345, "en");
+            subject.CreateChild(request, "user-1", RequestSource.Ombi);
+            await subject.BuildEpisodes(request);
+
+            movieDb.Verify(x => x.GetSeasonEpisodes(12345, 2, It.IsAny<CancellationToken>(), It.IsAny<string>()), Times.Once);
+            movieDb.Verify(x => x.GetSeasonEpisodes(12345, 1, It.IsAny<CancellationToken>(), It.IsAny<string>()), Times.Never);
+            movieDb.Verify(x => x.GetSeasonEpisodes(12345, 3, It.IsAny<CancellationToken>(), It.IsAny<string>()), Times.Never);
+
+            Assert.That(subject.ChildRequest.SeasonRequests, Has.Count.EqualTo(1));
+            Assert.That(subject.ChildRequest.SeasonRequests[0].SeasonNumber, Is.EqualTo(2));
+            Assert.That(subject.ChildRequest.SeasonRequests[0].Episodes, Has.Count.EqualTo(1));
+            Assert.That(subject.ChildRequest.SeasonRequests[0].Episodes[0].EpisodeNumber, Is.EqualTo(1));
+        }
+
+        [Test]
+        public async Task BuildEpisodes_LatestSeason_WhenTmdbReturnsNull_DoesNotThrowOrLoadOtherSeasons()
+        {
+            var movieDb = new Mock<IMovieDbApi>();
+            movieDb.Setup(x => x.GetTVInfo("12345", "en")).ReturnsAsync(new TvInfo
+            {
+                id = 12345,
+                name = "Test Show",
+                first_air_date = "2024-01-01",
+                seasons = new List<Season>
+                {
+                    new Season { season_number = 1 },
+                    new Season { season_number = 2 },
+                    new Season { season_number = 3 }
+                },
+                ExternalIds = new ExternalIds { TvDbId = "54321" }
+            });
+            movieDb.Setup(x => x.GetSeasonEpisodes(12345, 3, It.IsAny<CancellationToken>(), It.IsAny<string>()))
+                .ReturnsAsync((SeasonDetails)null);
+
+            var request = new TvRequestViewModelV2
+            {
+                TheMovieDbId = 12345,
+                LatestSeason = true
+            };
+
+            var subject = await new TvShowRequestBuilderV2(movieDb.Object).GetShowInfo(12345, "en");
+            subject.CreateChild(request, "user-1", RequestSource.Ombi);
+
+            await subject.BuildEpisodes(request);
+
+            movieDb.Verify(x => x.GetSeasonEpisodes(12345, 3, It.IsAny<CancellationToken>(), It.IsAny<string>()), Times.Once);
+            movieDb.Verify(x => x.GetSeasonEpisodes(12345, 1, It.IsAny<CancellationToken>(), It.IsAny<string>()), Times.Never);
+            movieDb.Verify(x => x.GetSeasonEpisodes(12345, 2, It.IsAny<CancellationToken>(), It.IsAny<string>()), Times.Never);
+            Assert.That(subject.ChildRequest.SeasonRequests, Is.Empty);
+        }
+
+        [Test]
+        public async Task BuildEpisodes_FirstSeason_OnlyLoadsFirstRegularSeason()
+        {
+            var movieDb = new Mock<IMovieDbApi>();
+            movieDb.Setup(x => x.GetTVInfo("12345", "en")).ReturnsAsync(new TvInfo
+            {
+                id = 12345,
+                name = "Test Show",
+                first_air_date = "2024-01-01",
+                seasons = new List<Season>
+                {
+                    new Season { season_number = 0 },
+                    new Season { season_number = 1 },
+                    new Season { season_number = 2 }
+                },
+                ExternalIds = new ExternalIds { TvDbId = "54321" }
+            });
+            movieDb.Setup(x => x.GetSeasonEpisodes(12345, 1, It.IsAny<CancellationToken>(), It.IsAny<string>()))
+                .ReturnsAsync(new SeasonDetails
+                {
+                    season_number = 1,
+                    episodes = new[]
+                    {
+                        new Episode { season_number = 1, episode_number = 1, name = "Pilot" }
+                    }
+                });
+
+            var request = new TvRequestViewModelV2
+            {
+                TheMovieDbId = 12345,
+                FirstSeason = true
+            };
+
+            var subject = await new TvShowRequestBuilderV2(movieDb.Object).GetShowInfo(12345, "en");
+            subject.CreateChild(request, "user-1", RequestSource.Ombi);
+            await subject.BuildEpisodes(request);
+
+            movieDb.Verify(x => x.GetSeasonEpisodes(12345, 1, It.IsAny<CancellationToken>(), It.IsAny<string>()), Times.Once);
+            movieDb.Verify(x => x.GetSeasonEpisodes(12345, 2, It.IsAny<CancellationToken>(), It.IsAny<string>()), Times.Never);
+            movieDb.Verify(x => x.GetSeasonEpisodes(12345, 0, It.IsAny<CancellationToken>(), It.IsAny<string>()), Times.Never);
+            Assert.That(subject.ChildRequest.SeasonRequests, Has.Count.EqualTo(1));
+            Assert.That(subject.ChildRequest.SeasonRequests[0].SeasonNumber, Is.EqualTo(1));
         }
 
         [Test]

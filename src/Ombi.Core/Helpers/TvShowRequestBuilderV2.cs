@@ -132,11 +132,22 @@ namespace Ombi.Core.Helpers
         public async Task<TvShowRequestBuilderV2> BuildEpisodes(TvRequestViewModelV2 tv)
         {
             var allEpisodes = new List<Episode>();
+            var seasonNumbers = GetSeasonNumbersToLoad(tv);
 
-            foreach (var season in TheMovieDbRecord.seasons)
+            foreach (var seasonNumber in seasonNumbers)
             {
-                var seasonEpisodes = await MovieDbApi.GetSeasonEpisodes(TheMovieDbRecord.id, season.season_number, CancellationToken.None);
+                var seasonEpisodes = await MovieDbApi.GetSeasonEpisodes(TheMovieDbRecord.id, seasonNumber, CancellationToken.None);
+                if (seasonEpisodes?.episodes == null)
+                {
+                    continue;
+                }
+
                 allEpisodes.AddRange(seasonEpisodes.episodes);
+            }
+
+            if (!allEpisodes.Any())
+            {
+                return this;
             }
 
             if (tv.RequestAll)
@@ -267,6 +278,51 @@ namespace Ombi.Core.Helpers
             return this;
         }
 
+
+        private IReadOnlyCollection<int> GetSeasonNumbersToLoad(TvRequestViewModelV2 tv)
+        {
+            var availableSeasons = TheMovieDbRecord.seasons ?? new List<Season>();
+
+            if (tv.RequestAll)
+            {
+                return availableSeasons
+                    .Select(x => x.season_number)
+                    .Distinct()
+                    .OrderBy(x => x)
+                    .ToArray();
+            }
+
+            if (tv.LatestSeason)
+            {
+                var latestSeason = availableSeasons
+                    .Where(x => x.season_number > 0)
+                    .OrderByDescending(x => x.season_number)
+                    .FirstOrDefault();
+
+                return latestSeason == null
+                    ? Array.Empty<int>()
+                    : new[] { latestSeason.season_number };
+            }
+
+            if (tv.FirstSeason)
+            {
+                var firstSeason = availableSeasons
+                    .Where(x => x.season_number > 0)
+                    .OrderBy(x => x.season_number)
+                    .FirstOrDefault();
+
+                return firstSeason == null
+                    ? Array.Empty<int>()
+                    : new[] { firstSeason.season_number };
+            }
+
+            return (tv.Seasons ?? new List<SeasonsViewModel>())
+                .Where(x => x.Episodes?.Any() == true)
+                .Select(x => x.SeasonNumber)
+                .Distinct()
+                .OrderBy(x => x)
+                .ToArray();
+        }
 
         public TvShowRequestBuilderV2 CreateNewRequest(TvRequestViewModelV2 tv, int rootPathOverride, int qualityOverride, int langProfile)
         {
