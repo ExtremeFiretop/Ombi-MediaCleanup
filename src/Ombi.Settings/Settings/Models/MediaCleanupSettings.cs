@@ -90,6 +90,12 @@ namespace Ombi.Settings.Settings.Models
         public DateTime CreatedAt { get; set; }
         public DateTime? VotingEndsAt { get; set; }
         public DateTime? ScheduledForDeletionAt { get; set; }
+        /// <summary>
+        /// Set immediately after Radarr/Sonarr confirms the destructive operation, before
+        /// Ombi request/cache reconciliation begins. A populated value makes reconciliation
+        /// retryable without issuing the destructive external operation again.
+        /// </summary>
+        public DateTime? ExternalDeletionCompletedAt { get; set; }
         public DateTime? CompletedAt { get; set; }
         public string ApprovedByUserId { get; set; }
         public string FailureReason { get; set; }

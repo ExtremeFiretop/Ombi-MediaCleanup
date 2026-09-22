@@ -261,7 +261,7 @@ namespace Ombi.Core.Engine
                             && canNominateUnderRestriction,
                         CanVote = cleanup != null && cleanup.Origin == MediaCleanupOrigin.Community && settings.CommunityCleanup != CommunityCleanupMode.Off && permissions.CanVote && IsVoteable(cleanup),
                         CanManage = cleanup != null && permissions.CanManage,
-                        CanCancel = cleanup != null && (permissions.CanManage || cleanup.RequestedByUserId == user.Id),
+                        CanCancel = cleanup != null && !cleanup.ExternalDeletionCompletedAt.HasValue && (permissions.CanManage || cleanup.RequestedByUserId == user.Id),
                         CommunityAgeEligible = ageEligible,
                         AvailableSince = availableSince,
                         SizeOnDisk = movieSizes.TryGetValue(movie.TheMovieDbId, out var movieSize) ? movieSize : 0,
@@ -350,7 +350,7 @@ namespace Ombi.Core.Engine
                             && canNominateUnderRestriction,
                         CanVote = cleanup != null && cleanup.Origin == MediaCleanupOrigin.Community && settings.CommunityCleanup != CommunityCleanupMode.Off && permissions.CanVote && IsVoteable(cleanup),
                         CanManage = cleanup != null && permissions.CanManage,
-                        CanCancel = cleanup != null && (permissions.CanManage || cleanup.RequestedByUserId == user.Id),
+                        CanCancel = cleanup != null && !cleanup.ExternalDeletionCompletedAt.HasValue && (permissions.CanManage || cleanup.RequestedByUserId == user.Id),
                         CommunityAgeEligible = ageEligible,
                         AvailableSince = availableSince,
                         SizeOnDisk = tvSizes.TryGetValue(tv.TvDbId, out var tvSize) ? tvSize : 0,
@@ -476,7 +476,7 @@ namespace Ombi.Core.Engine
                             && canNominateUnderRestriction,
                         CanVote = cleanup != null && cleanup.Origin == MediaCleanupOrigin.Community && settings.CommunityCleanup != CommunityCleanupMode.Off && permissions.CanVote && IsVoteable(cleanup),
                         CanManage = cleanup != null && permissions.CanManage,
-                        CanCancel = cleanup != null && (permissions.CanManage || cleanup.RequestedByUserId == user.Id),
+                        CanCancel = cleanup != null && !cleanup.ExternalDeletionCompletedAt.HasValue && (permissions.CanManage || cleanup.RequestedByUserId == user.Id),
                         CommunityAgeEligible = ageEligible,
                         AvailableSince = record.AvailableSince,
                         SizeOnDisk = tvSizes.TryGetValue(record.TvDbId, out var residualTvSize) ? residualTvSize : 0,
@@ -592,7 +592,7 @@ namespace Ombi.Core.Engine
                                   permissions.CanVote &&
                                   IsVoteable(record),
                         CanManage = permissions.CanManage,
-                        CanCancel = permissions.CanManage || record.RequestedByUserId == user.Id,
+                        CanCancel = !record.ExternalDeletionCompletedAt.HasValue && (permissions.CanManage || record.RequestedByUserId == user.Id),
                         CommunityAgeEligible = ageEligible,
                         AvailableSince = record.AvailableSince,
                         SizeOnDisk = sizeOnDisk,
@@ -857,14 +857,20 @@ namespace Ombi.Core.Engine
                 record.ScheduledForDeletionAt = TruncateToSecond(DateTime.UtcNow);
                 state.Requests.Add(record);
 
-                // Immediate deletion is synchronous. Persist the final state once after the
-                // deletion attempt to avoid tracking two GlobalSettings instances in the
-                // same scoped SettingsContext.
-                await ExecuteDeletion(record, settings);
+                // Immediate deletion is synchronous. ExecuteDeletion persists its destructive
+                // operation checkpoint through a fresh scope, then this scoped state is saved
+                // once with the final/retryable reconciliation state.
+                await ExecuteDeletion(record, settings, state);
                 await SaveState(state);
-                return record.Status == MediaCleanupStatus.Completed
-                    ? Success("Media was removed successfully.", record.Id)
-                    : Fail(record.FailureReason ?? "Media deletion failed.", record.Id);
+                if (record.Status == MediaCleanupStatus.Completed)
+                {
+                    return Success("Media was removed successfully.", record.Id);
+                }
+                if (record.ExternalDeletionCompletedAt.HasValue)
+                {
+                    return Success("Media was removed successfully. Ombi reconciliation is still pending and will retry automatically.", record.Id);
+                }
+                return Fail(record.FailureReason ?? "Media deletion failed.", record.Id);
             }
             finally
             {
@@ -1100,6 +1106,11 @@ namespace Ombi.Core.Engine
                     return Fail("Only the user who started the cleanup request or a cleanup manager can cancel it.");
                 }
 
+                if (record.ExternalDeletionCompletedAt.HasValue)
+                {
+                    return Fail("The media has already been deleted from the external service. Ombi reconciliation is still pending and cannot be cancelled.", record.Id);
+                }
+
                 record.Status = MediaCleanupStatus.Cancelled;
                 record.ScheduledForDeletionAt = null;
                 await SaveState(state);
@@ -1127,6 +1138,7 @@ namespace Ombi.Core.Engine
                 var matches = state.Requests
                     .Where(x => x != null &&
                                 IsActive(x) &&
+                                !x.ExternalDeletionCompletedAt.HasValue &&
                                 IsSameCleanupMedia(x, requestType, requestId, theMovieDbId, tvDbId))
                     .ToList();
 
@@ -1184,9 +1196,9 @@ namespace Ombi.Core.Engine
                     if (record.Status == MediaCleanupStatus.ScheduledForDeletion &&
                         record.ScheduledForDeletionAt.HasValue &&
                         IsDeletionDue(record.ScheduledForDeletionAt.Value, now) &&
-                        IsOriginEnabled(record, settings))
+                        (record.ExternalDeletionCompletedAt.HasValue || IsOriginEnabled(record, settings)))
                     {
-                        await ExecuteDeletion(record, settings);
+                        await ExecuteDeletion(record, settings, state);
                         changed = true;
                     }
                 }
@@ -1228,6 +1240,11 @@ namespace Ombi.Core.Engine
                 if (record == null || !IsActive(record))
                 {
                     return Fail("This cleanup request is no longer active.");
+                }
+
+                if (record.ExternalDeletionCompletedAt.HasValue)
+                {
+                    return Fail("The media has already been deleted from the external service. Ombi reconciliation is still pending and cannot be rejected.", record.Id);
                 }
 
                 record.Status = status;
@@ -1323,21 +1340,81 @@ namespace Ombi.Core.Engine
             });
         }
 
-        private async Task ExecuteDeletion(MediaCleanupRecord record, MediaCleanupSettings settings)
+        private async Task ExecuteDeletion(MediaCleanupRecord record, MediaCleanupSettings settings, MediaCleanupState state)
         {
+            // The external delete is destructive while everything after it is reconciliation.
+            // Persist a checkpoint between those phases so a DB/cache failure or application
+            // restart cannot cause the destructive *arr operation to be issued a second time.
+            if (!record.ExternalDeletionCompletedAt.HasValue)
+            {
+                try
+                {
+                    var externalDeleted = record.RequestType == RequestType.Movie
+                        ? await DeleteMovie(record, settings)
+                        : record.RequestType == RequestType.TvShow && await DeleteTv(record, settings);
+
+                    if (!externalDeleted)
+                    {
+                        throw new InvalidOperationException(record.RequestType == RequestType.Movie
+                            ? "The movie could not be found in an enabled Radarr instance."
+                            : "The series could not be found in the enabled Sonarr instance.");
+                    }
+
+                    record.ExternalDeletionCompletedAt = DateTime.UtcNow;
+                    record.FailureReason = null;
+
+                    // Use a fresh scope for the checkpoint. SettingsService attaches a new
+                    // GlobalSettings entity each time it saves, so saving twice through the same
+                    // scoped SettingsContext can trigger EF's duplicate-tracking exception.
+                    await SaveStateCheckpoint(state);
+                    _logger.LogInformation(
+                        "Media cleanup external deletion completed for {RequestType} '{Title}' ({CleanupId}); starting Ombi reconciliation",
+                        record.RequestType,
+                        record.Title,
+                        record.Id);
+                }
+                catch (Exception ex)
+                {
+                    if (record.ExternalDeletionCompletedAt.HasValue)
+                    {
+                        // Radarr/Sonarr already confirmed deletion, but persisting the checkpoint
+                        // failed. Keep the in-memory record retryable; the caller's normal state
+                        // save gets another chance to persist the checkpoint before this scope ends.
+                        record.Status = MediaCleanupStatus.ScheduledForDeletion;
+                        record.ScheduledForDeletionAt = TruncateToSecond(DateTime.UtcNow);
+                        record.FailureReason = $"External deletion succeeded, but its recovery checkpoint could not be saved and will be retried: {ex.Message}";
+                        _logger.LogError(ex,
+                            "Media cleanup external deletion succeeded for {RequestType} '{Title}' ({CleanupId}), but the recovery checkpoint could not be saved",
+                            record.RequestType,
+                            record.Title,
+                            record.Id);
+                    }
+                    else
+                    {
+                        record.Status = MediaCleanupStatus.Failed;
+                        record.FailureReason = ex.Message;
+                        record.ScheduledForDeletionAt = null;
+                        _logger.LogError(ex,
+                            "Media cleanup external deletion failed for {RequestType} '{Title}' ({CleanupId})",
+                            record.RequestType,
+                            record.Title,
+                            record.Id);
+                    }
+                    return;
+                }
+            }
+            else
+            {
+                _logger.LogInformation(
+                    "Resuming Ombi reconciliation for {RequestType} '{Title}' ({CleanupId}); external deletion completed at {ExternalDeletionCompletedAt}",
+                    record.RequestType,
+                    record.Title,
+                    record.Id,
+                    record.ExternalDeletionCompletedAt.Value);
+            }
+
             try
             {
-                var externalDeleted = record.RequestType == RequestType.Movie
-                    ? await DeleteMovie(record, settings)
-                    : record.RequestType == RequestType.TvShow && await DeleteTv(record, settings);
-
-                if (!externalDeleted)
-                {
-                    throw new InvalidOperationException(record.RequestType == RequestType.Movie
-                        ? "The movie could not be found in an enabled Radarr instance."
-                        : "The series could not be found in the enabled Sonarr instance.");
-                }
-
                 if (record.RequestType == RequestType.Movie)
                 {
                     // The details page determines Requested by provider id, not by the cleanup
@@ -1385,10 +1462,16 @@ namespace Ombi.Core.Engine
             }
             catch (Exception ex)
             {
-                record.Status = MediaCleanupStatus.Failed;
-                record.FailureReason = ex.Message;
-                record.ScheduledForDeletionAt = null;
-                _logger.LogError(ex, "Media cleanup failed for {RequestType} '{Title}' ({CleanupId})", record.RequestType, record.Title, record.Id);
+                // The destructive operation is already complete. Keep this record active and due
+                // so the next Media Cleanup job resumes only the idempotent Ombi reconciliation.
+                record.Status = MediaCleanupStatus.ScheduledForDeletion;
+                record.ScheduledForDeletionAt = TruncateToSecond(DateTime.UtcNow);
+                record.FailureReason = $"External deletion succeeded, but Ombi reconciliation failed and will be retried: {ex.Message}";
+                _logger.LogError(ex,
+                    "Media cleanup reconciliation failed for {RequestType} '{Title}' ({CleanupId}); it will be retried without deleting from *arr again",
+                    record.RequestType,
+                    record.Title,
+                    record.Id);
             }
         }
 
@@ -2185,7 +2268,11 @@ namespace Ombi.Core.Engine
 
         private void EvaluateCommunity(MediaCleanupRecord record, MediaCleanupSettings settings, DateTime now)
         {
-            if (record.Origin != MediaCleanupOrigin.Community || !IsActive(record))
+            // Once external deletion has happened, voting/approval can no longer change the
+            // outcome. The only valid transition is to finish Ombi reconciliation.
+            if (record.ExternalDeletionCompletedAt.HasValue ||
+                record.Origin != MediaCleanupOrigin.Community ||
+                !IsActive(record))
             {
                 return;
             }
@@ -2386,6 +2473,17 @@ namespace Ombi.Core.Engine
         private Task<bool> SaveState(MediaCleanupState state)
         {
             return _state.SaveSettingsAsync(state);
+        }
+
+        private async Task SaveStateCheckpoint(MediaCleanupState state)
+        {
+            using var scope = _serviceScopeFactory.CreateScope();
+            var checkpointState = scope.ServiceProvider.GetRequiredService<ISettingsService<MediaCleanupState>>();
+            checkpointState.ClearCache();
+            if (!await checkpointState.SaveSettingsAsync(state))
+            {
+                throw new InvalidOperationException("Could not persist the Media Cleanup recovery checkpoint.");
+            }
         }
 
         private static string GetRequesterDisplayName(OmbiUser requestedUser, string legacyRequestedByAlias, bool canSeeAliases)
