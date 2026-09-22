@@ -10,6 +10,7 @@ using Ombi.Api.External.ExternalApis.TheMovieDb;
 using Ombi.Api.External.ExternalApis.TheMovieDb.Models;
 using Ombi.Core.Authentication;
 using Ombi.Core.Engine.V2;
+using Ombi.Core.Helpers;
 using Ombi.Core.Models.Search;
 using Ombi.Core.Rule;
 using Ombi.Core.Rule.Interfaces;
