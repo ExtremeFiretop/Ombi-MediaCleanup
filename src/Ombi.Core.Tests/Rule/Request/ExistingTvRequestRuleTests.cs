@@ -171,6 +171,7 @@ namespace Ombi.Core.Tests.Rule.Request
             {
                 RequestType = RequestType.TvShow,
                 Id = 1,
+                RequestTheMovieDbId = 1,
                 SeasonRequests = new List<SeasonRequests>
                 {
                     new SeasonRequests
