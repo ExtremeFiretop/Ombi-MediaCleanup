@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -141,6 +142,10 @@ namespace Ombi.Core.Rule.Rules.Search
                 {
                     matchingEpisodes = allEpisodes.Where(x => x.Series.TvDbId == item.TvDbId);
                 }
+                else if (lookup.UseContentId)
+                {
+                    matchingEpisodes = allEpisodes.Where(x => x.Series.Id == item.Id);
+                }
 
                 if (matchingEpisodes != null)
                 {
@@ -153,9 +158,13 @@ namespace Ombi.Core.Rule.Rules.Search
 
                     foreach (var season in search.SeasonRequests)
                     {
+                        var mediaServerSeasonNumber = lookup.SeasonNumberMap.TryGetValue(season.SeasonNumber, out var mappedSeasonNumber)
+                            ? mappedSeasonNumber
+                            : season.SeasonNumber;
+
                         foreach (var episode in season.Episodes)
                         {
-                            if (availableEpisodeKeys.Contains((season.SeasonNumber, episode.EpisodeNumber)))
+                            if (availableEpisodeKeys.Contains((mediaServerSeasonNumber, episode.EpisodeNumber)))
                             {
                                 episode.Available = true;
                             }
@@ -288,5 +297,7 @@ namespace Ombi.Core.Rule.Rules.Search
         public bool UseImdb { get; set; }
         public bool UseTheMovieDb { get; set; }
         public bool UseTvDb { get; set; }
+        public bool UseContentId { get; set; }
+        public Dictionary<int, int> SeasonNumberMap { get; } = new Dictionary<int, int>();
     }
 }

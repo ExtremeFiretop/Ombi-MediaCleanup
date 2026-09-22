@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Ombi.Core.Engine;
+using Ombi.Core.Rule.Rules;
 using Ombi.Core.Rule.Interfaces;
 using Ombi.Store.Entities;
 using Ombi.Store.Entities.Requests;
@@ -67,6 +68,19 @@ namespace Ombi.Core.Rule.Rules.Request
 
                 if (providerIdMatch != null)
                 {
+                    var fingerprintMatch = await PlexEpisodeFingerprintMatcher.FindSingleSeasonMatch(
+                        _plexContent,
+                        tvRequest.SeasonRequests,
+                        providerIdMatch.Id);
+                    if (fingerprintMatch != null)
+                    {
+                        return CheckExistingContent(
+                            tvRequest,
+                            providerIdMatch,
+                            fingerprintMatch.SourceSeasonNumber,
+                            fingerprintMatch.PlexSeasonNumber);
+                    }
+
                     return CheckExistingContent(tvRequest, providerIdMatch);
                 }
 
@@ -77,7 +91,32 @@ namespace Ombi.Core.Rule.Rules.Request
                     && x.ReleaseYear == tvRequest.ReleaseYear.Year.ToString());
                 if (titleAndYearMatch != null)
                 {
+                    var fingerprintMatch = await PlexEpisodeFingerprintMatcher.FindSingleSeasonMatch(
+                        _plexContent,
+                        tvRequest.SeasonRequests,
+                        titleAndYearMatch.Id);
+                    if (fingerprintMatch != null)
+                    {
+                        return CheckExistingContent(
+                            tvRequest,
+                            titleAndYearMatch,
+                            fingerprintMatch.SourceSeasonNumber,
+                            fingerprintMatch.PlexSeasonNumber);
+                    }
+
                     return CheckExistingContent(tvRequest, titleAndYearMatch);
+                }
+
+                var fingerprintMatch = await PlexEpisodeFingerprintMatcher.FindSingleSeasonMatch(
+                    _plexContent,
+                    tvRequest.SeasonRequests);
+                if (fingerprintMatch != null)
+                {
+                    return CheckExistingContent(
+                        tvRequest,
+                        fingerprintMatch.Content,
+                        fingerprintMatch.SourceSeasonNumber,
+                        fingerprintMatch.PlexSeasonNumber);
                 }
 
                 return Success();
@@ -95,13 +134,21 @@ namespace Ombi.Core.Rule.Rules.Request
         }
 
 
-        private RuleResult CheckExistingContent(ChildRequests child, PlexServerContent content)
+        private RuleResult CheckExistingContent(
+            ChildRequests child,
+            PlexServerContent content,
+            int? sourceSeasonNumber = null,
+            int? plexSeasonNumber = null)
         {
             foreach (var season in child.SeasonRequests)
             {
                 var episodesToRemove = new List<EpisodeRequests>();
+                var seasonNumberToCheck = sourceSeasonNumber.HasValue && plexSeasonNumber.HasValue &&
+                                          season.SeasonNumber == sourceSeasonNumber.Value
+                    ? plexSeasonNumber.Value
+                    : season.SeasonNumber;
                 var currentSeasonRequest =
-                    content.Episodes.Where(x => x.SeasonNumber == season.SeasonNumber).ToList();
+                    content.Episodes.Where(x => x.SeasonNumber == seasonNumberToCheck).ToList();
                 if (!currentSeasonRequest.Any())
                 {
                     continue;

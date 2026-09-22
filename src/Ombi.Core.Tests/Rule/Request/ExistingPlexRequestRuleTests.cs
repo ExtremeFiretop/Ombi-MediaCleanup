@@ -187,6 +187,77 @@ namespace Ombi.Core.Tests.Rule.Request
         }
 
         [Test]
+        public async Task RequestShow_StandaloneSeasonMappedToAnthologySeason_IsAlreadyAvailable()
+        {
+            var plexSeries = new PlexServerContent
+            {
+                Id = 552121,
+                Type = MediaType.Series,
+                TheMovieDbId = "335840",
+                TvDbId = "389492",
+                ImdbId = "tt13207736",
+                Title = "Monster (2022)",
+                ReleaseYear = "2022"
+            };
+
+            var titles = new[]
+            {
+                "Bloodbath",
+                "Strong Kitty",
+                "Whack Job!",
+                "R.I.P (Rest in Pestilence) Abby Borden",
+                "41",
+                "Bed and Breakfast",
+                "The Trial of the Century",
+                "Carnival"
+            };
+
+            var plexEpisodes = titles
+                .Select((title, index) => (IMediaServerEpisode)new PlexEpisode
+                {
+                    SeasonNumber = 4,
+                    EpisodeNumber = index + 1,
+                    Title = title,
+                    Series = plexSeries
+                })
+                .ToList();
+            plexSeries.Episodes = plexEpisodes;
+
+            PlexContentRepo.Setup(x => x.GetAll())
+                .Returns(new List<PlexServerContent> { plexSeries }.AsQueryable().BuildMock());
+            PlexContentRepo.Setup(x => x.GetAllEpisodes())
+                .Returns(plexEpisodes.AsQueryable().BuildMock());
+
+            var request = new ChildRequests
+            {
+                RequestType = RequestType.TvShow,
+                RequestTheMovieDbId = 299939,
+                Title = "Monster: The Lizzie Borden Story",
+                ReleaseYear = new System.DateTime(2026, 9, 17),
+                SeasonRequests = new List<SeasonRequests>
+                {
+                    new SeasonRequests
+                    {
+                        SeasonNumber = 1,
+                        Episodes = titles
+                            .Select((title, index) => new EpisodeRequests
+                            {
+                                EpisodeNumber = index + 1,
+                                Title = title
+                            })
+                            .ToList()
+                    }
+                }
+            };
+
+            var result = await Rule.Execute(request);
+
+            Assert.That(result.Success, Is.False);
+            Assert.That(result.ErrorCode, Is.EqualTo(ErrorCode.EpisodesAlreadyRequested));
+            Assert.That(request.SeasonRequests[0].Episodes, Is.Empty);
+        }
+
+        [Test]
         public async Task RequestShow_NewSeasonRequest_IsSuccessful()
         {
             SetupMockData();

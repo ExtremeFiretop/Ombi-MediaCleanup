@@ -26,32 +26,55 @@ namespace Ombi.Core.Rule.Rules
             if (obj.RequestType == RequestType.TvShow)
             {
                 var vm = (ChildRequests) obj;
-                var existsInSonarr = await _ctx.SonarrCache
-                    .AsNoTracking()
-                    .AnyAsync(x => x.TheMovieDbId == vm.Id);
-                if (existsInSonarr && vm.SeasonRequests.Any())
+                if (vm.SeasonRequests.Any())
                 {
-                    // Load the show's Sonarr episode cache once. The previous implementation
-                    // executed a database query for every requested episode.
-                    var sonarrEpisodes = await _ctx.SonarrEpisodeCache
-                        .AsNoTracking()
-                        .Where(x => x.MovieDbId == vm.Id)
-                        .Select(x => new { x.SeasonNumber, x.EpisodeNumber })
-                        .ToListAsync();
-                    var monitoredEpisodes = sonarrEpisodes
-                        .Select(x => (x.SeasonNumber, x.EpisodeNumber))
-                        .ToHashSet();
+                    var requestTheMovieDbId = vm.RequestTheMovieDbId > 0
+                        ? vm.RequestTheMovieDbId
+                        : vm.Id;
+                    var requestTvDbId = vm.RequestTvDbId;
 
-                    foreach (var season in vm.SeasonRequests)
+                    // Sonarr is TVDB-centric and older cache rows commonly have TheMovieDbId = 0.
+                    // Never query either cache with a zero provider ID: doing so groups unrelated
+                    // series together and can incorrectly remove every episode from a new request.
+                    var monitoredEpisodes = new HashSet<(int SeasonNumber, int EpisodeNumber)>();
+
+                    if (requestTvDbId > 0)
                     {
-                        season.Episodes.RemoveAll(ep =>
-                            monitoredEpisodes.Contains((season.SeasonNumber, ep.EpisodeNumber)));
+                        var tvDbEpisodes = await _ctx.SonarrEpisodeCache
+                            .AsNoTracking()
+                            .Where(x => x.TvDbId == requestTvDbId)
+                            .Select(x => new { x.SeasonNumber, x.EpisodeNumber })
+                            .ToListAsync();
+                        monitoredEpisodes.UnionWith(
+                            tvDbEpisodes.Select(x => (x.SeasonNumber, x.EpisodeNumber)));
                     }
 
-                    var anyEpisodes = vm.SeasonRequests.SelectMany(x => x.Episodes).Any();
-                    if (!anyEpisodes)
+                    // Fall back to TMDB only when it is a real provider ID and TVDB did not yield
+                    // any cached episodes. This keeps compatibility with newer Sonarr cache rows.
+                    if (monitoredEpisodes.Count == 0 && requestTheMovieDbId > 0)
                     {
-                        return new RuleResult { ErrorCode = ErrorCode.EpisodesAlreadyRequested, Message = $"We already have episodes requested from series {vm.Title}" };
+                        var movieDbEpisodes = await _ctx.SonarrEpisodeCache
+                            .AsNoTracking()
+                            .Where(x => x.MovieDbId == requestTheMovieDbId)
+                            .Select(x => new { x.SeasonNumber, x.EpisodeNumber })
+                            .ToListAsync();
+                        monitoredEpisodes.UnionWith(
+                            movieDbEpisodes.Select(x => (x.SeasonNumber, x.EpisodeNumber)));
+                    }
+
+                    if (monitoredEpisodes.Count > 0)
+                    {
+                        foreach (var season in vm.SeasonRequests)
+                        {
+                            season.Episodes.RemoveAll(ep =>
+                                monitoredEpisodes.Contains((season.SeasonNumber, ep.EpisodeNumber)));
+                        }
+
+                        var anyEpisodes = vm.SeasonRequests.SelectMany(x => x.Episodes).Any();
+                        if (!anyEpisodes)
+                        {
+                            return new RuleResult { ErrorCode = ErrorCode.EpisodesAlreadyRequested, Message = $"We already have episodes requested from series {vm.Title}" };
+                        }
                     }
                 }
             }
