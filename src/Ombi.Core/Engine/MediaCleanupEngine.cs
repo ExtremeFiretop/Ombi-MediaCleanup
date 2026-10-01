@@ -872,6 +872,7 @@ namespace Ombi.Core.Engine
                         state.Requests.Remove(record);
                         return PersistenceFailure(record.Id);
                     }
+                    LogCleanupAudit(record, "RemovalRequested", record.Status.ToString());
                     QueueManagersPendingApprovalNotification(record, settings);
                     return Success("Removal request submitted for administrator approval.", record.Id);
                 }
@@ -904,6 +905,8 @@ namespace Ombi.Core.Engine
                         record.Id);
                     return Fail("Media removal could not start because the cleanup request could not be persisted. No media was deleted.");
                 }
+
+                LogCleanupAudit(record, "DeletionAuthorized", "ImmediateDeletion");
 
                 // ExecuteDeletion persists a second checkpoint after the destructive operation,
                 // then this scoped state is saved once with the final/retryable reconciliation state.
@@ -1023,6 +1026,7 @@ namespace Ombi.Core.Engine
                     state.Requests.Remove(record);
                     return PersistenceFailure(record.Id);
                 }
+                LogCleanupAudit(record, "CleanupNominated", record.Status.ToString());
                 if (record.Status == MediaCleanupStatus.PendingAdminApproval)
                 {
                     QueueManagersPendingApprovalNotification(record, settings);
@@ -1149,6 +1153,7 @@ namespace Ombi.Core.Engine
                 {
                     return PersistenceFailure(record.Id);
                 }
+                LogCleanupAudit(record, "DeletionAuthorized", "AdminApproved");
                 return Success("Cleanup approved and scheduled for deletion.", record.Id);
             }
             finally
@@ -1197,6 +1202,7 @@ namespace Ombi.Core.Engine
                 {
                     return PersistenceFailure(record.Id);
                 }
+                LogCleanupAudit(record, "CleanupCancelled", "Cancelled");
                 return Success("Cleanup request cancelled.", record.Id);
             }
             finally
@@ -1246,6 +1252,11 @@ namespace Ombi.Core.Engine
                         requestType,
                         requestId);
                     return;
+                }
+
+                foreach (var record in matches)
+                {
+                    LogCleanupAudit(record, "CleanupCancelled", "UnderlyingRequestDeleted");
                 }
 
                 _logger.LogInformation(
@@ -1351,6 +1362,10 @@ namespace Ombi.Core.Engine
                 {
                     return PersistenceFailure(record.Id);
                 }
+                LogCleanupAudit(
+                    record,
+                    status == MediaCleanupStatus.Rejected ? "CleanupRejected" : "CleanupStateChanged",
+                    status.ToString());
                 return Success(message, record.Id);
             }
             finally
@@ -1461,6 +1476,7 @@ namespace Ombi.Core.Engine
                     // destructive *arr call. Authorization may shrink while it waits, but a new
                     // request/owner or a changed target must never inherit an older approval.
                     await RevalidateDeletionAuthorization(record);
+                    LogCleanupAudit(record, "ExternalDeletionStarting", "Attempting");
 
                     var externalDeleted = record.RequestType == RequestType.Movie
                         ? await DeleteMovie(record)
@@ -1498,11 +1514,10 @@ namespace Ombi.Core.Engine
                     // GlobalSettings entity each time it saves, so saving twice through the same
                     // scoped SettingsContext can trigger EF's duplicate-tracking exception.
                     await SaveStateCheckpoint(state);
-                    _logger.LogInformation(
-                        "Media cleanup external deletion completed for {RequestType} '{Title}' ({CleanupId}); starting Ombi reconciliation",
-                        record.RequestType,
-                        record.Title,
-                        record.Id);
+                    LogCleanupAudit(
+                        record,
+                        "ExternalDeletionCompleted",
+                        externalDeleted ? "Confirmed" : "AlreadyAbsentAfterRetry");
                 }
                 catch (MediaCleanupTerminalException ex)
                 {
@@ -1535,12 +1550,7 @@ namespace Ombi.Core.Engine
             }
             else
             {
-                _logger.LogInformation(
-                    "Resuming Ombi reconciliation for {RequestType} '{Title}' ({CleanupId}); external deletion completed at {ExternalDeletionCompletedAt}",
-                    record.RequestType,
-                    record.Title,
-                    record.Id,
-                    record.ExternalDeletionCompletedAt.Value);
+                LogCleanupAudit(record, "OmbiReconciliationResuming", "Pending");
             }
 
             try
@@ -1588,7 +1598,7 @@ namespace Ombi.Core.Engine
                 record.CompletedAt = DateTime.UtcNow;
                 record.ScheduledForDeletionAt = null;
                 ResetRetryState(record);
-                _logger.LogInformation("Media cleanup removed {RequestType} '{Title}' ({CleanupId})", record.RequestType, record.Title, record.Id);
+                LogCleanupAudit(record, "CleanupCompleted", "Success");
             }
             catch (Exception ex)
             {
@@ -1639,14 +1649,14 @@ namespace Ombi.Core.Engine
             record.NextRetryAt = TruncateToSecond(now.Add(delay));
             record.FailureReason = $"{phase} failed and will retry automatically: {ex.Message}";
 
-            _logger.LogWarning(ex,
-                "Media cleanup {Phase} failed for {RequestType} '{Title}' ({CleanupId}); retry {RetryCount} is scheduled for {NextRetryAt}",
+            LogCleanupAudit(
+                record,
+                "RetryScheduled",
+                "TransientFailure",
+                LogLevel.Warning,
+                ex,
                 phase,
-                record.RequestType,
-                record.Title,
-                record.Id,
-                record.RetryCount,
-                record.NextRetryAt);
+                record.FailureReason);
         }
 
         private void MarkTerminalFailure(MediaCleanupRecord record, Exception ex, string phase)
@@ -1656,12 +1666,94 @@ namespace Ombi.Core.Engine
             record.NextRetryAt = null;
             record.ScheduledForDeletionAt = null;
             record.FailureReason = ex.Message;
-            _logger.LogError(ex,
-                "Media cleanup {Phase} failed permanently for {RequestType} '{Title}' ({CleanupId})",
+            LogCleanupAudit(
+                record,
+                "CleanupFailed",
+                "PermanentFailure",
+                LogLevel.Error,
+                ex,
                 phase,
+                record.FailureReason);
+        }
+
+        private void LogCleanupAudit(
+            MediaCleanupRecord record,
+            string action,
+            string result,
+            LogLevel level = LogLevel.Information,
+            Exception exception = null,
+            string phase = null,
+            string failureReason = null,
+            string actualDestination = null,
+            string externalItemIds = null)
+        {
+            if (record == null)
+            {
+                return;
+            }
+
+            var plan = record.DeletionPlan;
+            var targets = plan?.Targets ?? new List<MediaCleanupExternalTarget>();
+            var selectedEpisodes = record.SelectedEpisodes ?? new List<MediaCleanupEpisodeRecord>();
+            var selectedSeasons = record.SelectedSeasons ?? new List<int>();
+
+            var destinations = targets.Count == 0
+                ? "NotAuthorized"
+                : string.Join(";", targets.Select(x => $"{x.Service}:{NormalizeExternalEndpoint(x.Endpoint)}"));
+            var selectedSeasonList = selectedSeasons.Count == 0
+                ? "EntireTitle"
+                : string.Join(",", selectedSeasons.OrderBy(x => x));
+            var selectedEpisodeList = selectedEpisodes.Count == 0
+                ? "EntireTitle"
+                : string.Join(",", selectedEpisodes
+                    .OrderBy(x => x.SeasonNumber)
+                    .ThenBy(x => x.EpisodeNumber)
+                    .Select(x => $"S{x.SeasonNumber:00}E{x.EpisodeNumber:00}"));
+            var selectedEpisodeFileIds = selectedEpisodes
+                .Where(x => x.EpisodeFileId > 0)
+                .Select(x => x.EpisodeFileId)
+                .Distinct()
+                .OrderBy(x => x)
+                .ToList();
+            var selectedFileList = selectedEpisodeFileIds.Count == 0
+                ? "None"
+                : string.Join(",", selectedEpisodeFileIds);
+
+            _logger.Log(
+                level,
+                exception,
+                "Media Cleanup audit {AuditAction}: Result={AuditResult}, Phase={AuditPhase}, CleanupId={CleanupId}, Status={CleanupStatus}, MediaType={MediaType}, MediaRequestId={MediaRequestId}, Title={MediaTitle}, TMDB={TmdbId}, TVDB={TvdbId}, Origin={CleanupOrigin}, RequestedByUserId={RequestedByUserId}, ApprovedByUserId={ApprovedByUserId}, OwnerCount={OwnerCount}, Destinations={Destinations}, ActualDestination={ActualDestination}, ExternalItemIds={ExternalItemIds}, DeleteFiles={DeleteFiles}, AddImportExclusion={AddImportExclusion}, AuthorizedAt={AuthorizedAt}, ScheduledForDeletionAt={ScheduledForDeletionAt}, ExternalDeletionCompletedAt={ExternalDeletionCompletedAt}, SelectedSeasonCount={SelectedSeasonCount}, SelectedSeasons={SelectedSeasons}, SelectedEpisodeCount={SelectedEpisodeCount}, SelectedEpisodes={SelectedEpisodes}, SelectedEpisodeFileCount={SelectedEpisodeFileCount}, SelectedEpisodeFileIds={SelectedEpisodeFileIds}, RetryCount={RetryCount}, NextRetryAt={NextRetryAt}, FailureReason={FailureReason}",
+                action,
+                result,
+                phase ?? string.Empty,
+                record.Id,
+                record.Status,
                 record.RequestType,
+                record.MediaRequestId,
                 record.Title,
-                record.Id);
+                record.TheMovieDbId,
+                record.TvDbId,
+                record.Origin,
+                record.RequestedByUserId ?? string.Empty,
+                record.ApprovedByUserId ?? string.Empty,
+                record.OwnerUserIds?.Count ?? 0,
+                destinations,
+                actualDestination ?? string.Empty,
+                externalItemIds ?? string.Empty,
+                plan?.DeleteFiles,
+                plan?.AddImportExclusion,
+                plan?.AuthorizedAt,
+                record.ScheduledForDeletionAt,
+                record.ExternalDeletionCompletedAt,
+                selectedSeasons.Count,
+                selectedSeasonList,
+                selectedEpisodes.Count,
+                selectedEpisodeList,
+                selectedEpisodeFileIds.Count,
+                selectedFileList,
+                record.RetryCount,
+                record.NextRetryAt,
+                failureReason ?? record.FailureReason ?? string.Empty);
         }
 
         private static void ResetRetryState(MediaCleanupRecord record)
@@ -2002,16 +2094,16 @@ namespace Ombi.Core.Engine
             var deletedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var radarrSettings in approvedSettings)
             {
-                deleted |= await DeleteMovieFromRadarr(record.TheMovieDbId, radarrSettings, plan, deletedKeys);
+                deleted |= await DeleteMovieFromRadarr(record, radarrSettings, plan, deletedKeys);
             }
 
             return deleted;
         }
 
-        private async Task<bool> DeleteMovieFromRadarr(int tmdbId, RadarrSettings radarrSettings, MediaCleanupDeletionPlan plan, HashSet<string> deletedKeys)
+        private async Task<bool> DeleteMovieFromRadarr(MediaCleanupRecord record, RadarrSettings radarrSettings, MediaCleanupDeletionPlan plan, HashSet<string> deletedKeys)
         {
             var movies = await _radarr.GetMoviesForCleanup(radarrSettings.ApiKey, radarrSettings.FullUri);
-            var matches = movies.Where(x => x.tmdbId == tmdbId).ToList();
+            var matches = movies.Where(x => x.tmdbId == record.TheMovieDbId).ToList();
             var deleted = false;
             foreach (var movie in matches)
             {
@@ -2025,6 +2117,12 @@ namespace Ombi.Core.Engine
                 {
                     throw new MediaCleanupTerminalException($"Radarr rejected the delete request for movie id {movie.id} without an HTTP status.");
                 }
+                LogCleanupAudit(
+                    record,
+                    "ExternalItemDeleted",
+                    "Success",
+                    actualDestination: $"Radarr:{NormalizeExternalEndpoint(radarrSettings.FullUri)}",
+                    externalItemIds: $"movie:{movie.id}");
                 deleted = true;
             }
             return deleted;
@@ -2066,6 +2164,12 @@ namespace Ombi.Core.Engine
             {
                 throw new MediaCleanupTerminalException($"Sonarr rejected the delete request for series id {match.id} without an HTTP status.");
             }
+            LogCleanupAudit(
+                record,
+                "ExternalItemDeleted",
+                "Success",
+                actualDestination: $"Sonarr:{NormalizeExternalEndpoint(sonarrSettings.FullUri)}",
+                externalItemIds: $"series:{match.id}");
             return true;
         }
 
@@ -2139,13 +2243,17 @@ namespace Ombi.Core.Engine
                 {
                     throw new MediaCleanupTerminalException($"Sonarr rejected the delete request for episode file id {fileId} without an HTTP status.");
                 }
+
+                // Log each successful file deletion separately. If a later file fails, the audit
+                // trail still identifies exactly which destructive operations already succeeded.
+                LogCleanupAudit(
+                    record,
+                    "ExternalItemDeleted",
+                    "Success",
+                    actualDestination: $"Sonarr:{NormalizeExternalEndpoint(sonarrSettings.FullUri)}",
+                    externalItemIds: $"episodeFile:{fileId}");
             }
 
-            _logger.LogInformation(
-                "Media cleanup removed {FileCount} Sonarr episode file(s) covering {EpisodeCount} episode(s) from '{Title}'",
-                fileIds.Count,
-                selectedEpisodes.Count,
-                record.Title);
             return true;
         }
 

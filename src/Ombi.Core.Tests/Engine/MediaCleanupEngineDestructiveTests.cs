@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using MockQueryable.Moq;
 using Moq;
 using Moq.AutoMock;
@@ -332,6 +333,56 @@ namespace Ombi.Core.Tests.Engine
             Assert.That(events, Is.EqualTo(new[] { "external-delete", "checkpoint", "ombi-reconcile" }));
             Assert.That(record.ExternalDeletionCompletedAt, Is.Not.Null);
             Assert.That(record.Status, Is.EqualTo(MediaCleanupStatus.Completed));
+        }
+
+        [Test]
+        public async Task SuccessfulMovieDeletion_EmitsStructuredDestructiveAuditFields()
+        {
+            var record = AddDueMovie();
+            record.ApprovedByUserId = "manager";
+            SetupMovieInRadarr(record);
+            _radarr.Setup(x => x.DeleteMovie(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), true, false))
+                .ReturnsAsync(true);
+
+            await _subject.ProcessPending();
+
+            var logger = _mocker.GetMock<ILogger<MediaCleanupEngine>>();
+            var deletionStarted = new Dictionary<string, object>
+            {
+                ["AuditAction"] = "ExternalDeletionStarting",
+                ["AuditResult"] = "Attempting",
+                ["CleanupId"] = record.Id,
+                ["MediaType"] = RequestType.Movie,
+                ["TmdbId"] = record.TheMovieDbId,
+                ["ApprovedByUserId"] = "manager",
+                ["Destinations"] = $"Radarr:{_radarrSettings.FullUri.TrimEnd('/')}",
+                ["DeleteFiles"] = true,
+                ["AddImportExclusion"] = false
+            };
+            logger.Verify(
+                x => x.Log(
+                    LogLevel.Information,
+                    It.IsAny<EventId>(),
+                    It.Is<It.IsAnyType>((state, _) => HasAuditProperties(state, deletionStarted)),
+                    It.IsAny<Exception>(),
+                    It.IsAny<Func<It.IsAnyType, Exception, string>>()),
+                Times.Once);
+
+            var itemDeleted = new Dictionary<string, object>
+            {
+                ["AuditAction"] = "ExternalItemDeleted",
+                ["CleanupId"] = record.Id,
+                ["ActualDestination"] = $"Radarr:{_radarrSettings.FullUri.TrimEnd('/')}",
+                ["ExternalItemIds"] = "movie:44"
+            };
+            logger.Verify(
+                x => x.Log(
+                    LogLevel.Information,
+                    It.IsAny<EventId>(),
+                    It.Is<It.IsAnyType>((state, _) => HasAuditProperties(state, itemDeleted)),
+                    It.IsAny<Exception>(),
+                    It.IsAny<Func<It.IsAnyType, Exception, string>>()),
+                Times.Once);
         }
 
         [Test]
@@ -1263,6 +1314,18 @@ namespace Ombi.Core.Tests.Engine
                 Title = record.Title,
                 ChildRequests = children.ToList()
             };
+        }
+
+        private static bool HasAuditProperties(object state, IReadOnlyDictionary<string, object> expected)
+        {
+            var properties = state as IEnumerable<KeyValuePair<string, object>>;
+            if (properties == null)
+            {
+                return false;
+            }
+
+            var values = properties.ToDictionary(x => x.Key, x => x.Value);
+            return expected.All(x => values.TryGetValue(x.Key, out var value) && Equals(value, x.Value));
         }
 
         private void SetupMovieInRadarr(MediaCleanupRecord record)
