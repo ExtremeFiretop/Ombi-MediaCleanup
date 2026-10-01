@@ -103,12 +103,20 @@ namespace Ombi.Controllers.V1
         /// <param name="model">The model.</param>
         /// <returns></returns>
         [HttpPost]
+        [EnableRateLimiting("TokenLogin")]
         [ProducesResponseType(401)]
         [ProducesResponseType(typeof(Token), 200)]
         public async Task<IActionResult> GetToken([FromBody] UserAuthModel model)
         {
             if (!model.UsePlexOAuth)
             {
+                var authSettings = await _authSettings.GetSettingsAsync();
+                if (authSettings.DisableLocalAuthentication)
+                {
+                    _log.LogWarning("Blocked Ombi username/password login attempt by IP: {IpAddress}", GetRequestIP());
+                    return new UnauthorizedResult();
+                }
+
                 var user = await _userManager.FindByNameAsync(model.Username);
 
                 if (user == null)
@@ -163,6 +171,7 @@ namespace Ombi.Controllers.V1
         /// Returns the Token for the Ombi User if we can match the Plex user with a valid Ombi User
         /// </summary>
         [HttpPost("plextoken")]
+        [EnableRateLimiting("PlexTokenLogin")]
         [ProducesResponseType(401)]
         [ProducesResponseType(400)]
         public async Task<IActionResult> GetTokenWithPlexToken([FromBody] PlexTokenAuthentication model)
@@ -220,7 +229,9 @@ namespace Ombi.Controllers.V1
                 //await _token.CreateToken(new Tokens() {Token = accessToken, User = user});
             }
 
-            user.LastLoggedIn = DateTime.UtcNow;
+            var loginTime = DateTime.UtcNow;
+            user.LastLoggedIn = loginTime;
+            user.LastActive = loginTime;
 
             await _userManager.UpdateAsync(user);
 
@@ -710,6 +721,14 @@ namespace Ombi.Controllers.V1
         [HttpPost("requirePassword")]
         public async Task<bool> DoesUserRequireAPassword([FromBody] UserAuthModel model)
         {
+            var authSettings = await _authSettings.GetSettingsAsync();
+            if (authSettings.DisableLocalAuthentication)
+            {
+                // Do not look up users when Ombi credential login is disabled. The login UI will
+                // not call this endpoint, and returning true keeps legacy clients fail-closed.
+                return true;
+            }
+
             var user = await _userManager.FindByNameAsync(model.Username);
 
             if (user == null)

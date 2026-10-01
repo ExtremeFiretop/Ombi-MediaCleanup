@@ -92,13 +92,14 @@ namespace Ombi.Schedule.Jobs.Plex
                 return;
             }
 
-            _logger.LogInformation($"Watchlist import using server '{selectedServer.Name}' (machine {selectedServer.MachineIdentifier})");
+            _logger.LogInformation("[PlexWatchlist] Starting watchlist import using server '{Server}' (machine {MachineIdentifier})", selectedServer.Name, selectedServer.MachineIdentifier);
             await NotifyClient("Starting Watchlist Import");
 
             var (targets, legacyIdsByUsername, friendsFetched, adminResolved) = await BuildTargetList(adminToken, ct);
             if (targets.Count == 0)
             {
-                _logger.LogInformation("No watchlist targets found (admin + friends)");
+                _logger.LogInformation("[PlexWatchlist] No watchlist targets found (admin + friends)");
+                _logger.LogInformation("[PlexWatchlist] Finished watchlist import");
                 await NotifyClient("Finished Watchlist Import");
                 return;
             }
@@ -177,6 +178,7 @@ namespace Ombi.Schedule.Jobs.Plex
                 }
             }
 
+            _logger.LogInformation("[PlexWatchlist] Finished watchlist import");
             await NotifyClient("Finished Watchlist Import");
         }
 
@@ -429,12 +431,12 @@ namespace Ombi.Schedule.Jobs.Plex
             // /Token/plextoken, and PlexUserImporter.CleanupPlexUsers would delete them on its
             // next run anyway. To sync their watchlist, share your server with them.
             //
-            // Logged at Warning because if an admin ever slipped through here (an existing
-            // admin row is a hard prerequisite for this job to run at all, so in practice the
-            // adoption path will always catch them) it's a misconfiguration worth surfacing.
+            // This is an expected condition for community-only friends who do not have a
+            // server share. Keep it at Debug so a frequent watchlist job does not flood the
+            // warning log with the same non-actionable skip every run.
             if (string.IsNullOrWhiteSpace(resolvedNumericId))
             {
-                _logger.LogWarning(
+                _logger.LogDebug(
                     "Skipping Plex friend '{Username}' ({PlexUserId}): not in the server's /api/users list, so Ombi has no numeric plex.tv id to key on. Share the Plex server with them to enable watchlist sync.",
                     plexUser.username, plexUser.id);
                 return null;
@@ -512,50 +514,75 @@ namespace Ombi.Schedule.Jobs.Plex
             var pendingItems = new List<(PlexCommunityWatchlistNode node, ProviderId ids)>();
             var seenCursors = new HashSet<string>();
             var pageCount = 0;
+            var returnedCount = 0;
+            var resolvedCount = 0;
+            var itemsProcessed = 0;
+            var newRequestsCreated = 0;
+            var alreadyRequestedCount = 0;
+            var failedItemsCount = 0;
+            var unresolvedTitles = new List<string>();
+            string snapshotFetchFailure = null;
 
-            // Tracks whether we obtained a complete, trustworthy snapshot of the watchlist
-            // this run. Only an authoritative snapshot may be used to prune history: if any
-            // page bailed out, an item couldn't be resolved to a TMDB id, or the run was
-            // cancelled, the set of "current" ids is partial and pruning against it would
-            // delete history rows for titles that are still watchlisted. Those titles would
-            // then look brand-new on the next run and be re-requested, re-monitoring and
-            // re-grabbing content the user has intentionally removed (issue #5427).
-            var snapshotComplete = true;
+            // This flag answers one deliberately narrow question: is the set of TMDB ids we
+            // built authoritative enough to drive destructive history cleanup? A successfully
+            // fetched empty watchlist is authoritative. A fetch/pagination problem, malformed
+            // response, unidentified node, or unresolved TMDB id is not. Resolved additions can
+            // still be processed when metadata for some other item is unresolved (#5427).
+            var canPruneHistory = true;
 
             do
             {
                 pageCount++;
                 if (pageCount > MaxWatchlistPages)
                 {
+                    snapshotFetchFailure = $"pagination exceeded the {MaxWatchlistPages}-page safety limit";
                     _logger.LogWarning("Watchlist for '{User}' exceeded {Max} pages; stopping to avoid an infinite loop",
                         plexUser.username, MaxWatchlistPages);
-                    snapshotComplete = false;
+                    canPruneHistory = false;
                     break;
                 }
                 if (!string.IsNullOrEmpty(cursor) && !seenCursors.Add(cursor))
                 {
+                    snapshotFetchFailure = "Plex returned a repeated pagination cursor";
                     _logger.LogWarning("Plex community API returned a repeated pagination cursor for '{User}'; stopping",
                         plexUser.username);
-                    snapshotComplete = false;
+                    canPruneHistory = false;
                     break;
                 }
 
                 var response = await _plexApi.GetWatchlistForUser(adminToken, plexUser.id, cursor, ct);
                 if (response?.errors != null && response.errors.Count > 0)
                 {
-                    _logger.LogWarning($"Plex community API returned errors for '{plexUser.username}': {string.Join("; ", response.errors.Select(e => e.message))}");
-                    return false;
+                    snapshotFetchFailure = $"Plex GraphQL errors: {string.Join("; ", response.errors.Select(e => e.message))}";
+                    _logger.LogWarning("Plex community API returned errors for '{User}': {Errors}",
+                        plexUser.username, string.Join("; ", response.errors.Select(e => e.message)));
+                    canPruneHistory = false;
+                    break;
                 }
 
+                // Do not collapse a failed/malformed response into an empty watchlist. Only a
+                // structurally valid response with a watchlist, nodes collection and pageInfo can
+                // prove that zero nodes really means the user's watchlist is empty.
                 var watchlist = response?.data?.userV2?.watchlist;
-                var nodes = watchlist?.nodes ?? new List<PlexCommunityWatchlistNode>();
+                if (watchlist == null || watchlist.nodes == null || watchlist.pageInfo == null)
+                {
+                    snapshotFetchFailure = "Plex response did not contain a complete watchlist payload";
+                    _logger.LogWarning("Plex community API returned an incomplete watchlist payload for '{User}'; history will be preserved",
+                        plexUser.username);
+                    canPruneHistory = false;
+                    break;
+                }
+
+                var nodes = watchlist.nodes;
+                returnedCount += nodes.Count;
                 foreach (var node in nodes)
                 {
                     if (string.IsNullOrWhiteSpace(node.id))
                     {
-                        // A node we can't even identify means this page wasn't fully accounted
-                        // for, so the snapshot isn't authoritative and must not drive pruning.
-                        snapshotComplete = false;
+                        unresolvedTitles.Add(node.title.HasValue() ? node.title : "(item with no Plex id)");
+                        _logger.LogDebug("Skipping watchlist item '{Title}' for '{User}' because Plex returned no item id",
+                            node.title, user.UserName);
+                        canPruneHistory = false;
                         continue;
                     }
 
@@ -565,33 +592,64 @@ namespace Ombi.Schedule.Jobs.Plex
                         var alt = await FindTmdbIdFromAlternateSources(ids, node.type);
                         if (string.IsNullOrEmpty(alt))
                         {
-                            _logger.LogWarning($"No TheMovieDb Id found for {node.title} for user {user.UserName}, skipping");
-                            // We can't confirm this title's identity this run, so the snapshot
-                            // is incomplete and must not be used to prune history.
-                            snapshotComplete = false;
+                            unresolvedTitles.Add(node.title.HasValue() ? node.title : node.id);
+                            _logger.LogDebug("No TheMovieDb Id found for '{Title}' for user '{User}', skipping",
+                                node.title, user.UserName);
+                            // We can't confirm this title's identity this run, so the current set
+                            // must not be used to prune history.
+                            canPruneHistory = false;
                             continue;
                         }
                         ids.TheMovieDb = alt;
                     }
 
+                    // TMDB ids are numeric. Treat a non-numeric provider id as unresolved rather
+                    // than allowing it to make an otherwise partial set look authoritative.
+                    if (!int.TryParse(ids.TheMovieDb, out _))
+                    {
+                        unresolvedTitles.Add(node.title.HasValue() ? node.title : node.id);
+                        _logger.LogDebug("Skipping '{Title}' for '{User}': non-numeric TMDB id '{TmdbId}'",
+                            node.title, user.UserName, ids.TheMovieDb);
+                        canPruneHistory = false;
+                        continue;
+                    }
+
+                    resolvedCount++;
                     currentWatchlistTmdbIds.Add(ids.TheMovieDb);
                     pendingItems.Add((node, ids));
                 }
 
-                cursor = watchlist?.pageInfo?.hasNextPage == true ? watchlist.pageInfo.endCursor : null;
+                if (watchlist.pageInfo.hasNextPage)
+                {
+                    if (string.IsNullOrWhiteSpace(watchlist.pageInfo.endCursor))
+                    {
+                        snapshotFetchFailure = "Plex indicated another page but returned no end cursor";
+                        _logger.LogWarning("Plex community API indicated another watchlist page for '{User}' but returned no end cursor; history will be preserved",
+                            plexUser.username);
+                        canPruneHistory = false;
+                        break;
+                    }
+
+                    cursor = watchlist.pageInfo.endCursor;
+                }
+                else
+                {
+                    cursor = null;
+                }
             }
             while (!string.IsNullOrEmpty(cursor) && !ct.IsCancellationRequested);
 
             if (ct.IsCancellationRequested)
             {
-                snapshotComplete = false;
+                snapshotFetchFailure ??= "watchlist import was cancelled before pagination completed";
+                canPruneHistory = false;
             }
 
             var historyEntries = await _watchlistRepo.GetAll().Where(x => x.UserId == user.Id).ToListAsync(ct);
             var existingTmdbIds = new HashSet<string>(historyEntries.Select(h => h.TmdbId));
 
             // Refresh the "last seen" marker for every history row whose title we resolved on
-            // the watchlist this run. We do this even on an incomplete snapshot — a title we
+            // the watchlist this run. We do this even when cleanup is unsafe — a title we
             // actually resolved was definitely seen — so a long-standing title stays fresh and
             // can never become eligible for pruning just because some other title failed to
             // resolve. This is what the grace-window pruning below debounces against (#5427).
@@ -610,16 +668,11 @@ namespace Ombi.Schedule.Jobs.Plex
                 await _watchlistRepo.SaveChangesAsync();
             }
 
-            // Purge history for titles no longer on the user's watchlist, but only when we
-            // have a complete snapshot AND it actually resolved at least one title. An empty
-            // or partial result is far more likely to be a transient community-API hiccup
-            // than a genuinely cleared watchlist; pruning against it would re-request titles
-            // the user already has (issue #5427). On top of that, we only prune a row once it
-            // has been continuously absent for the whole grace window, so a one-off bad run
-            // (e.g. an ambiguous TMDB resolution) can't wipe a still-watchlisted title and
-            // re-monitor episodes the user has intentionally removed. A stale history row is
-            // harmless — it just stops that title being re-requested — so we err on keeping it.
-            if (snapshotComplete && currentWatchlistTmdbIds.Count > 0)
+            // A complete, authoritative snapshot may drive pruning even when it contains zero
+            // items. The response validation above is what distinguishes a genuinely empty
+            // watchlist from a failed/null/malformed response. The grace window still applies,
+            // so a history row is only removed after it has been continuously absent long enough.
+            if (canPruneHistory)
             {
                 var pruneIfNotSeenSince = now - WatchlistHistoryRetentionGrace;
                 foreach (var entry in historyEntries)
@@ -643,10 +696,6 @@ namespace Ombi.Schedule.Jobs.Plex
                     await _watchlistRepo.Delete(entry);
                 }
             }
-            else if (historyEntries.Count > 0)
-            {
-                _logger.LogWarning("Skipping watchlist history cleanup for '{User}' because this sync did not return a complete watchlist snapshot; existing history is preserved and will be re-checked next run", user.UserName);
-            }
 
             foreach (var (node, ids) in pendingItems)
             {
@@ -655,29 +704,70 @@ namespace Ombi.Schedule.Jobs.Plex
                     continue;
                 }
 
+                // The TMDB id was validated before the item was added to pendingItems.
                 if (!int.TryParse(ids.TheMovieDb, out var tmdbId))
                 {
-                    _logger.LogWarning($"Skipping {node.title} for {user.UserName}: non-numeric TMDB id '{ids.TheMovieDb}'");
                     continue;
                 }
 
                 var nodeType = node.type ?? string.Empty;
+                WatchlistProcessResult processResult;
                 if (nodeType.Equals("show", StringComparison.OrdinalIgnoreCase) ||
                     nodeType.Equals("tvshow", StringComparison.OrdinalIgnoreCase))
                 {
-                    await ProcessShow(tmdbId, user, monitorAll);
+                    itemsProcessed++;
+                    processResult = await ProcessShow(tmdbId, user, monitorAll);
                 }
                 else if (nodeType.Equals("movie", StringComparison.OrdinalIgnoreCase))
                 {
-                    await ProcessMovie(tmdbId, user);
+                    itemsProcessed++;
+                    processResult = await ProcessMovie(tmdbId, user);
                 }
                 else
                 {
                     _logger.LogDebug($"Skipping unknown watchlist type '{node.type}' for {node.title}");
+                    continue;
+                }
+
+                switch (processResult)
+                {
+                    case WatchlistProcessResult.Created:
+                        newRequestsCreated++;
+                        break;
+                    case WatchlistProcessResult.AlreadyRequested:
+                        alreadyRequestedCount++;
+                        break;
+                    case WatchlistProcessResult.Failed:
+                        failedItemsCount++;
+                        break;
                 }
             }
 
-            return true;
+            var cleanupState = canPruneHistory ? "allowed" : "skipped";
+            var cleanupReason = string.Empty;
+            if (!string.IsNullOrWhiteSpace(snapshotFetchFailure))
+            {
+                cleanupReason = $" (snapshot fetch incomplete: {snapshotFetchFailure})";
+            }
+            else if (unresolvedTitles.Count > 0)
+            {
+                var titles = string.Join(", ", unresolvedTitles.Take(5));
+                if (unresolvedTitles.Count > 5)
+                {
+                    titles += $", +{unresolvedTitles.Count - 5} more";
+                }
+                cleanupReason = $" (unresolved metadata: {titles})";
+            }
+
+            var processingFailureSummary = failedItemsCount > 0
+                ? $", {failedItemsCount} failed"
+                : string.Empty;
+
+            _logger.LogInformation(
+                "[PlexWatchlist] User '{User}': {ReturnedCount} items returned, {ResolvedCount} resolved, {UnresolvedCount} unresolved, {ItemsProcessed} items processed, {NewRequestsCreated} new requests created, {AlreadyRequestedCount} already requested{ProcessingFailureSummary}, history cleanup {CleanupState}{CleanupReason}",
+                user.UserName, returnedCount, resolvedCount, unresolvedTitles.Count, itemsProcessed, newRequestsCreated, alreadyRequestedCount, processingFailureSummary, cleanupState, cleanupReason);
+
+            return string.IsNullOrWhiteSpace(snapshotFetchFailure) && !ct.IsCancellationRequested;
         }
 
         private async Task<ProviderId> ResolveProviderIds(string adminToken, PlexCommunityWatchlistNode node, CancellationToken ct)
@@ -726,7 +816,14 @@ namespace Ombi.Schedule.Jobs.Plex
             return string.Empty;
         }
 
-        private async Task ProcessMovie(int theMovieDbId, OmbiUser user)
+        private enum WatchlistProcessResult
+        {
+            Created,
+            AlreadyRequested,
+            Failed
+        }
+
+        private async Task<WatchlistProcessResult> ProcessMovie(int theMovieDbId, OmbiUser user)
         {
             _movieRequestEngine.SetUser(user);
             var response = await _movieRequestEngine.RequestMovie(new() { TheMovieDbId = theMovieDbId, Source = RequestSource.PlexWatchlist });
@@ -736,18 +833,18 @@ namespace Ombi.Schedule.Jobs.Plex
                 {
                     _logger.LogDebug($"Movie already requested for user '{user.UserName}'");
                     await AddToHistory(theMovieDbId, user.Id);
-                    return;
+                    return WatchlistProcessResult.AlreadyRequested;
                 }
                 _logger.LogInformation($"Error adding title from PlexWatchlist for user '{user.UserName}'. Message: '{response.ErrorMessage}'");
+                return WatchlistProcessResult.Failed;
             }
-            else
-            {
-                await AddToHistory(theMovieDbId, user.Id);
-                _logger.LogInformation($"Added title from PlexWatchlist for user '{user.UserName}'. {response.Message}");
-            }
+
+            await AddToHistory(theMovieDbId, user.Id);
+            _logger.LogInformation($"Added title from PlexWatchlist for user '{user.UserName}'. {response.Message}");
+            return WatchlistProcessResult.Created;
         }
 
-        private async Task ProcessShow(int theMovieDbId, OmbiUser user, bool requestAll)
+        private async Task<WatchlistProcessResult> ProcessShow(int theMovieDbId, OmbiUser user, bool requestAll)
         {
             _tvRequestEngine.SetUser(user);
             var requestModel = new TvRequestViewModelV2 { LatestSeason = true, TheMovieDbId = theMovieDbId, Source = RequestSource.PlexWatchlist };
@@ -759,19 +856,20 @@ namespace Ombi.Schedule.Jobs.Plex
             var response = await _tvRequestEngine.RequestTvShow(requestModel);
             if (response.IsError)
             {
-                if (response.ErrorCode == ErrorCode.AlreadyRequested)
+                if (response.ErrorCode == ErrorCode.AlreadyRequested ||
+                    response.ErrorCode == ErrorCode.EpisodesAlreadyRequested)
                 {
                     _logger.LogDebug($"Show already requested for user '{user.UserName}'");
                     await AddToHistory(theMovieDbId, user.Id);
-                    return;
+                    return WatchlistProcessResult.AlreadyRequested;
                 }
                 _logger.LogInformation($"Error adding title from PlexWatchlist for user '{user.UserName}'. Message: '{response.ErrorMessage}'");
+                return WatchlistProcessResult.Failed;
             }
-            else
-            {
-                await AddToHistory(theMovieDbId, user.Id);
-                _logger.LogInformation($"Added title from PlexWatchlist for user '{user.UserName}'. {response.Message}");
-            }
+
+            await AddToHistory(theMovieDbId, user.Id);
+            _logger.LogInformation($"Added title from PlexWatchlist for user '{user.UserName}'. {response.Message}");
+            return WatchlistProcessResult.Created;
         }
 
         private async Task AddToHistory(int theMovieDbId, string userId)

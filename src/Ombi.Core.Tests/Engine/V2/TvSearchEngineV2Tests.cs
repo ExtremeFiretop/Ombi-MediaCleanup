@@ -1,39 +1,199 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AutoMapper;
-using MockQueryable.Moq;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using Moq.AutoMock;
 using NUnit.Framework;
 using Ombi.Api.External.ExternalApis.TheMovieDb;
 using Ombi.Api.External.ExternalApis.TheMovieDb.Models;
-using Ombi.Api.External.ExternalApis.Trakt;
-using Ombi.Api.External.ExternalApis.TvMaze;
 using Ombi.Core.Authentication;
-using Ombi.Core.Engine.Interfaces;
 using Ombi.Core.Engine.V2;
 using Ombi.Core.Helpers;
-using Ombi.Core.Models.Requests;
 using Ombi.Core.Models.Search;
 using Ombi.Core.Rule;
 using Ombi.Core.Rule.Interfaces;
-using Ombi.Core.Services;
-using Ombi.Core.Settings;
 using Ombi.Helpers;
 using Ombi.Mapping.Profiles;
-using Ombi.Settings.Settings.Models;
 using Ombi.Store.Entities;
+using Ombi.Test.Common;
+using System.Linq;
+using MockQueryable.Moq;
+using Ombi.Api.External.ExternalApis.Trakt;
+using Ombi.Api.External.ExternalApis.TvMaze;
+using Ombi.Core.Engine.Interfaces;
+using Ombi.Core.Models.Requests;
+using Ombi.Core.Services;
+using Ombi.Core.Settings;
+using Ombi.Settings.Settings.Models;
 using Ombi.Store.Entities.Requests;
 using Ombi.Store.Repository;
 using Ombi.Store.Repository.Requests;
-using Ombi.Test.Common;
 
 namespace Ombi.Core.Tests.Engine.V2
 {
     [TestFixture]
     public class TvSearchEngineV2Tests
+    {
+        [Test]
+        public async Task GetShowInformation_ResolvesMissingExternalIdsBeforeAvailabilityRules()
+        {
+            var mocker = new AutoMocker();
+            var userManager = MockHelper.MockUserManager(new List<OmbiUser>());
+            mocker.Use(userManager.Object);
+
+            mocker.GetMock<ICurrentUser>()
+                .Setup(x => x.GetUser())
+                .ReturnsAsync((OmbiUser)null);
+
+            var mapperConfig = new MapperConfiguration(cfg => cfg.AddProfile<TvProfileV2>(), NullLoggerFactory.Instance);
+            mocker.Use(mapperConfig.CreateMapper());
+
+            mocker.GetMock<ICacheService>()
+                .Setup(x => x.GetOrAddAsync(
+                    It.IsAny<string>(),
+                    It.IsAny<Func<Task<TvInfo>>>(),
+                    It.IsAny<DateTimeOffset>()))
+                .Returns((string cacheKey, Func<Task<TvInfo>> factory, DateTimeOffset expiration) => factory());
+
+            mocker.GetMock<IMovieDbApi>()
+                .Setup(x => x.GetTVInfo("299939", "en"))
+                .ReturnsAsync(new TvInfo
+                {
+                    id = 299939,
+                    name = "Monster: The Lizzie Borden Story",
+                    first_air_date = "2026-09-17",
+                    seasons = new List<Season>(),
+                    networks = new[] { new Network { id = 213, name = "Netflix" } },
+                    episode_run_time = Array.Empty<int>(),
+                    genres = Array.Empty<Genre>(),
+                    Credits = new Credits
+                    {
+                        cast = Array.Empty<FullMovieCast>(),
+                        crew = Array.Empty<FullMovieCrew>()
+                    },
+                    Videos = new Videos { results = Array.Empty<Result>() },
+                    Images = new Images
+                    {
+                        Backdrops = new List<ImageContent>(),
+                        Posters = new List<ImageContent>
+                        {
+                            new ImageContent { FilePath = "/poster.jpg" }
+                        }
+                    },
+                    ExternalIds = new ExternalIds
+                    {
+                        ImdbId = string.Empty,
+                        TvDbId = null
+                    }
+                });
+
+            mocker.GetMock<IMovieDbApi>()
+                .Setup(x => x.GetTvExternals(299939))
+                .ReturnsAsync(new TvExternals
+                {
+                    imdb_id = "tt13207736",
+                    tvdb_id = 389492
+                });
+
+            SearchViewModel ruleInput = null;
+            mocker.GetMock<IRuleEvaluator>()
+                .Setup(x => x.StartSearchRules(It.IsAny<SearchViewModel>()))
+                .Callback<SearchViewModel>(x =>
+                {
+                    ruleInput = x;
+                    // This is the state PlexAvailabilityRule can now reach by matching
+                    // the existing Plex row through the stable IMDb/TVDB identifiers.
+                    if (x.ImdbId == "tt13207736")
+                    {
+                        x.Available = true;
+                    }
+                })
+                .ReturnsAsync(new[] { new RuleResult { Success = true } });
+
+            var subject = mocker.CreateInstance<TvSearchEngineV2>();
+            var result = await subject.GetShowInformation("299939", CancellationToken.None);
+
+            Assert.That(ruleInput, Is.Not.Null);
+            Assert.That(ruleInput.ImdbId, Is.EqualTo("tt13207736"));
+            Assert.That(ruleInput.TheTvDbId, Is.EqualTo("389492"));
+            Assert.That(result.ImdbId, Is.EqualTo("tt13207736"));
+            Assert.That(result.TheTvDbId, Is.EqualTo("389492"));
+            Assert.That(result.Available, Is.True);
+
+            mocker.GetMock<IMovieDbApi>()
+                .Verify(x => x.GetTvExternals(299939), Times.Once);
+        }
+        [Test]
+        public async Task GetShowInformation_MissingRegionalImagesAndMissingEnglishFallback_DoesNotThrow()
+        {
+            var mocker = new AutoMocker();
+            var user = new OmbiUser { Id = "user-1", Language = "fr" };
+            var userManager = MockHelper.MockUserManager(new List<OmbiUser> { user });
+            mocker.Use(userManager.Object);
+
+            mocker.GetMock<ICurrentUser>()
+                .Setup(x => x.GetUser())
+                .ReturnsAsync(user);
+
+            var mapperConfig = new MapperConfiguration(cfg => cfg.AddProfile<TvProfileV2>(), NullLoggerFactory.Instance);
+            mocker.Use(mapperConfig.CreateMapper());
+
+            mocker.GetMock<ICacheService>()
+                .Setup(x => x.GetOrAddAsync(
+                    It.IsAny<string>(),
+                    It.IsAny<Func<Task<TvInfo>>>(),
+                    It.IsAny<DateTimeOffset>()))
+                .Returns((string cacheKey, Func<Task<TvInfo>> factory, DateTimeOffset expiration) => factory());
+
+            mocker.GetMock<IMovieDbApi>()
+                .Setup(x => x.GetTVInfo("12345", "fr"))
+                .ReturnsAsync(new TvInfo
+                {
+                    id = 12345,
+                    name = "Test Show",
+                    overview = string.Empty,
+                    first_air_date = "2024-01-01",
+                    seasons = new List<Season>(),
+                    networks = new[] { new Network { id = 1, name = "Test Network" } },
+                    episode_run_time = Array.Empty<int>(),
+                    genres = Array.Empty<Genre>(),
+                    Credits = new Credits
+                    {
+                        cast = Array.Empty<FullMovieCast>(),
+                        crew = Array.Empty<FullMovieCrew>()
+                    },
+                    Videos = new Videos { results = Array.Empty<Result>() },
+                    Images = null,
+                    ExternalIds = new ExternalIds
+                    {
+                        ImdbId = "tt1234567",
+                        TvDbId = "7654321"
+                    }
+                });
+
+            mocker.GetMock<IMovieDbApi>()
+                .Setup(x => x.GetTVInfo("12345", "en"))
+                .ReturnsAsync((TvInfo)null);
+
+            mocker.GetMock<IRuleEvaluator>()
+                .Setup(x => x.StartSearchRules(It.IsAny<SearchViewModel>()))
+                .ReturnsAsync(new[] { new RuleResult { Success = true } });
+
+            var subject = mocker.CreateInstance<TvSearchEngineV2>();
+            var result = await subject.GetShowInformation("12345", CancellationToken.None);
+
+            Assert.That(result, Is.Not.Null);
+            mocker.GetMock<IMovieDbApi>()
+                .Verify(x => x.GetTVInfo("12345", "en"), Times.Once);
+        }
+
+    }
+
+    [TestFixture]
+    public class TvSearchEngineV2DiscoverRegressionTests
     {
         private const int TheMovieDbId = 1399;
         private const int SeasonCount = 2;
@@ -112,7 +272,7 @@ namespace Ombi.Core.Tests.Engine.V2
             var requestService = new Mock<IRequestServiceMain>();
             requestService.Setup(x => x.TvRequestService).Returns(tvRepo.Object);
 
-            var mapper = new MapperConfiguration(cfg => cfg.AddProfile<TvProfile>()).CreateMapper();
+            var mapper = new MapperConfiguration(cfg => cfg.AddProfile<TvProfile>(), NullLoggerFactory.Instance).CreateMapper();
 
             _engine = new TvSearchEngineV2(currentUser.Object, requestService.Object, new Mock<ITvMazeApi>().Object,
                 mapper, new Mock<ITraktApi>().Object, rules.Object,
@@ -220,7 +380,8 @@ namespace Ombi.Core.Tests.Engine.V2
         /// </summary>
         private class TestCacheService : ICacheService
         {
-            private readonly Dictionary<string, object> _cache = new Dictionary<string, object>();
+            private readonly System.Collections.Concurrent.ConcurrentDictionary<string, object> _cache =
+                new System.Collections.Concurrent.ConcurrentDictionary<string, object>();
 
             public async Task<T> GetOrAddAsync<T>(string cacheKey, Func<Task<T>> factory, DateTimeOffset absoluteExpiration = default)
             {
@@ -230,8 +391,7 @@ namespace Ombi.Core.Tests.Engine.V2
                 }
 
                 var result = await factory();
-                _cache[cacheKey] = result;
-                return result;
+                return (T)_cache.GetOrAdd(cacheKey, result);
             }
 
             public T GetOrAdd<T>(string cacheKey, Func<T> factory, DateTimeOffset absoluteExpiration)
@@ -242,11 +402,10 @@ namespace Ombi.Core.Tests.Engine.V2
                 }
 
                 var result = factory();
-                _cache[cacheKey] = result;
-                return result;
+                return (T)_cache.GetOrAdd(cacheKey, result);
             }
 
-            public void Remove(string key) => _cache.Remove(key);
+            public void Remove(string key) => _cache.TryRemove(key, out _);
         }
     }
 }

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
@@ -226,6 +226,11 @@ namespace Ombi.Controllers.V1
             await CreateRole(OmbiRoles.EditCustomPage);
             await CreateRole(OmbiRoles.Request4KMovie);
             await CreateRole(OmbiRoles.AutoApprove4KMovie);
+            await CreateRole(OmbiRoles.RequestMediaRemoval);
+            await CreateRole(OmbiRoles.DeleteOwnMedia);
+            await CreateRole(OmbiRoles.VoteOnMediaCleanup);
+            await CreateRole(OmbiRoles.ManageMediaCleanup);
+            await CreateRole(OmbiRoles.SelectQualityProfile);
         }
 
         private async Task CreateRole(string role)
@@ -298,6 +303,18 @@ namespace Ombi.Controllers.V1
         }
 
         /// <summary>
+        /// Lightweight authenticated endpoint used by the web client to report active use.
+        /// UserActivityMiddleware performs the throttled LastActive update before this action runs.
+        /// </summary>
+        [HttpPost("activity")]
+        [Authorize]
+        [ApiExplorerSettings(IgnoreApi = true)]
+        public IActionResult RecordActivity()
+        {
+            return Ok();
+        }
+
+        /// <summary>
         /// Sets the current users language
         /// </summary>
         [HttpPost("language")]
@@ -363,6 +380,7 @@ namespace Ombi.Controllers.V1
                 UserType = (Core.Models.UserType)(int)user.UserType,
                 Claims = new List<ClaimCheckboxes>(),
                 LastLoggedIn = user.LastLoggedIn,
+                LastActive = user.LastActive,
                 HasLoggedIn = user.LastLoggedIn.HasValue,
                 EpisodeRequestLimit = user.EpisodeRequestLimit ?? 0,
                 MovieRequestLimit = user.MovieRequestLimit ?? 0,
@@ -749,6 +767,14 @@ namespace Ombi.Controllers.V1
         [PowerUser]
         public async Task<IEnumerable<ClaimCheckboxes>> GetAllClaims()
         {
+            // Upgraded installations do not run the first-run CreateRoles path, so ensure
+            // media-cleanup roles exist before returning the assignable role list.
+            await CreateRole(OmbiRoles.RequestMediaRemoval);
+            await CreateRole(OmbiRoles.DeleteOwnMedia);
+            await CreateRole(OmbiRoles.VoteOnMediaCleanup);
+            await CreateRole(OmbiRoles.ManageMediaCleanup);
+            await CreateRole(OmbiRoles.SelectQualityProfile);
+
             var claims = new List<ClaimCheckboxes>();
             // Add the missing claims
             var allRoles = await RoleManager.Roles.ToListAsync();

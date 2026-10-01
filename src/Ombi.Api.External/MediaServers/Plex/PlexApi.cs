@@ -161,6 +161,24 @@ namespace Ombi.Api.External.MediaServers.Plex
             return await Api.Request<PlexContainer>(request);
         }
 
+        public async Task<PlexContainer> GetHistory(string authToken, string plexFullHost, string metadataItemId, CancellationToken cancellationToken = default)
+        {
+            var request = new Request("status/sessions/history/all", plexFullHost, HttpMethod.Get);
+            request.AddQueryString("metadataItemID", metadataItemId);
+            request.AddQueryString("sort", "viewedAt:desc");
+            AddLimitHeaders(request, 0, 1);
+
+            // Play history is optional Media Cleanup enrichment, but callers must be able to
+            // distinguish a successful empty history response from an HTTP/API failure. Do not
+            // let the generic API layer turn a 404/500 error body into a default PlexContainer.
+            // The Media Cleanup caller handles the failure with title-specific context.
+            request.IgnoreErrors = true;
+            request.ThrowOnErrorStatus = true;
+
+            await AddHeaders(request, authToken);
+            return await Api.Request<PlexContainer>(request, cancellationToken);
+        }
+
         public async Task<PlexLibrariesForMachineId> GetLibrariesForMachineId(string authToken, string machineId)
         {
             var request = new Request("", $"https://plex.tv/api/servers/{machineId}", HttpMethod.Get, ContentType.Xml);

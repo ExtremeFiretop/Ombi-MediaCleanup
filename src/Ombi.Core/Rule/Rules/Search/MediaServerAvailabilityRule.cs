@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Ombi.Core.Models.Search;
 using Ombi.Core.Rule.Interfaces;
@@ -121,15 +123,40 @@ namespace Ombi.Core.Rule.Rules.Search
                 return;
             }
 
-            var allEpisodes = GetAllEpisodes();
-            foreach (var season in search.SeasonRequests.ToList())
+            try
             {
-                foreach (var episode in season.Episodes.ToList())
+                // FindContent has already resolved one specific media-server content row.
+                // Scope episode availability to that exact row rather than re-querying by the
+                // provider ID that happened to find it. Provider IDs are not guaranteed to be
+                // unique in a stale or migrated media-server cache, and querying by them can
+                // merge episodes from multiple series into one availability result.
+                var matchingEpisodes = GetAllEpisodes().Where(x => x.Series.Id == item.Id);
+
+                var availableEpisodes = await matchingEpisodes
+                    .Select(x => new { x.SeasonNumber, x.EpisodeNumber })
+                    .ToListAsync();
+                var availableEpisodeKeys = availableEpisodes
+                    .Select(x => (x.SeasonNumber, x.EpisodeNumber))
+                    .ToHashSet();
+
+                foreach (var season in search.SeasonRequests)
                 {
-                    await AvailabilityRuleHelper.SingleEpisodeCheck(
-                        lookup.UseImdb, allEpisodes, episode, season, item,
-                        lookup.UseTheMovieDb, lookup.UseTvDb, Log);
+                    var mediaServerSeasonNumber = lookup.SeasonNumberMap.TryGetValue(season.SeasonNumber, out var mappedSeasonNumber)
+                        ? mappedSeasonNumber
+                        : season.SeasonNumber;
+
+                    foreach (var episode in season.Episodes)
+                    {
+                        if (availableEpisodeKeys.Contains((mediaServerSeasonNumber, episode.EpisodeNumber)))
+                        {
+                            episode.Available = true;
+                        }
+                    }
                 }
+            }
+            catch (Exception e)
+            {
+                Log.LogError(e, "Exception thrown when attempting to check if something is available");
             }
 
             AvailabilityRuleHelper.CheckForUnairedEpisodes(search);
@@ -252,5 +279,7 @@ namespace Ombi.Core.Rule.Rules.Search
         public bool UseImdb { get; set; }
         public bool UseTheMovieDb { get; set; }
         public bool UseTvDb { get; set; }
+        public bool UseContentId { get; set; }
+        public Dictionary<int, int> SeasonNumberMap { get; } = new Dictionary<int, int>();
     }
 }

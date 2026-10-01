@@ -73,21 +73,26 @@ namespace Ombi.Core.Engine.V2
                 return null;
             }
 
-            if (!show.Images?.Posters?.Any() ?? false && !string.Equals(langCode, "en", StringComparison.OrdinalIgnoreCase))
+            if (!(show.Images?.Posters?.Any() ?? false) && !string.Equals(langCode, "en", StringComparison.OrdinalIgnoreCase))
             {
                 // There's no regional assets for this, so 
                 // lookup the en-us version to get them
                 var enShow = await Cache.GetOrAddAsync(nameof(GetShowInformation) + "en" + tvdbid,
                     async () => await _movieApi.GetTVInfo(tvdbid, "en"), DateTimeOffset.Now.AddHours(12));
 
-                // For some of the more obsecure cases
-                if (!show.overview.HasValue())
+                if (enShow != null)
                 {
-                    show.overview = enShow.overview;
-                }
+                    // For some of the more obsecure cases
+                    if (!show.overview.HasValue())
+                    {
+                        show.overview = enShow.overview;
+                    }
 
-                show.Images = enShow.Images;
+                    show.Images = enShow.Images;
+                }
             }
+
+            await PopulateMissingExternalIds(show);
 
             var mapped = _mapper.Map<SearchFullInfoTvShowViewModel>(show);
 
@@ -100,6 +105,34 @@ namespace Ombi.Core.Engine.V2
             }
 
             return await ProcessResult(mapped);
+        }
+
+        private async Task PopulateMissingExternalIds(TvInfo show)
+        {
+            show.ExternalIds ??= new Ombi.Api.External.ExternalApis.TheMovieDb.Models.ExternalIds();
+
+            var hasImdbId = show.ExternalIds.ImdbId.HasValue();
+            var hasTvDbId = int.TryParse(show.ExternalIds.TvDbId, out var tvDbId) && tvDbId > 0;
+            if (hasImdbId && hasTvDbId)
+            {
+                return;
+            }
+
+            var externalIds = await _movieApi.GetTvExternals(show.id);
+            if (externalIds == null)
+            {
+                return;
+            }
+
+            if (!hasImdbId && externalIds.imdb_id.HasValue())
+            {
+                show.ExternalIds.ImdbId = externalIds.imdb_id;
+            }
+
+            if (!hasTvDbId && externalIds.tvdb_id > 0)
+            {
+                show.ExternalIds.TvDbId = externalIds.tvdb_id.ToString();
+            }
         }
 
         public async Task<IEnumerable<SearchTvShowViewModel>> Popular(int currentlyLoaded, int amountToLoad, string langCustomCode = null)
@@ -218,6 +251,9 @@ namespace Ombi.Core.Engine.V2
             return results;
         }
 
+        private const int MaxConcurrentTmdbEnrichmentRequests = 4;
+        private static readonly SemaphoreSlim TmdbEnrichmentLimiter = new(MaxConcurrentTmdbEnrichmentRequests, MaxConcurrentTmdbEnrichmentRequests);
+
         private async Task<IEnumerable<SearchTvShowViewModel>> ProcessResults(List<MovieDbSearchResult> items)
         {
             var settings = await _customization.GetSettingsAsync();
@@ -227,26 +263,25 @@ namespace Ombi.Core.Engine.V2
 
             var nonDemoItems = items.Where(item => !DemoCheck(item.Title)).ToList();
 
+            // Availability enrichment can require one TMDB show request plus a request for every season.
+            // Build a fresh season list for each result instead of mutating the cached MovieDbSearchResult.
+            // Cold-cache TMDB calls remain bounded by TmdbEnrichmentLimiter.
+            var availabilitySeasons = settings.HideAvailableFromDiscover
+                ? await Task.WhenAll(nonDemoItems.Select(item => GetSeasonsForAvailability(item.Id)))
+                : nonDemoItems.Select(_ => new List<SeasonRequests>()).ToArray();
+
             // Run ProcessResult sequentially (RunSearchRules accesses DbContext which is not thread-safe)
             var retVal = new List<SearchTvShowViewModel>();
-            foreach (var item in nonDemoItems)
+            for (var index = 0; index < nonDemoItems.Count; index++)
             {
-                // We only need the episodes to work out how much of the show is available.
-                // The results from TheMovieDb are cached and shared by every request, so the seasons
-                // must be built into a new list each time. Writing them onto the cached item would
-                // append another copy of every episode each time we are called.
-                var seasonRequests = settings.HideAvailableFromDiscover
-                    ? await GetSeasonsForAvailability(item.Id)
-                    : new List<SeasonRequests>();
-
-                var result = await ProcessResult(item, seasonRequests);
+                var result = await ProcessResult(nonDemoItems[index], availabilitySeasons[index]);
                 if (result == null || (settings.HideAvailableFromDiscover && result.Available))
                 {
                     continue;
                 }
 
-                // The availability rules have had their use out of the seasons, the discover views
-                // do not display them and they are megabytes worth of JSON per page.
+                // The availability rules have consumed the season data. Discover cards do not use it,
+                // and returning it would unnecessarily inflate the response payload.
                 result.SeasonRequests = new List<SeasonRequests>();
                 retVal.Add(result);
             }
@@ -255,34 +290,64 @@ namespace Ombi.Core.Engine.V2
         }
 
         /// <summary>
-        /// Builds the season and episode information used to determine how much of a show we
-        /// already have. Always returns a new list, the caller must not write it back onto any
-        /// cached object.
+        /// Builds the season/episode data needed by availability rules without writing it back onto
+        /// cached TMDB search results. Each caller receives a new list, so repeated Discover requests
+        /// cannot accumulate duplicate episodes.
         /// </summary>
         private async Task<List<SeasonRequests>> GetSeasonsForAvailability(int theMovieDbId)
         {
             var seasonRequests = new List<SeasonRequests>();
-
-            var show = await Cache.GetOrAddAsync(nameof(GetShowInformation) + theMovieDbId,
-                () => _movieApi.GetTVInfo(theMovieDbId.ToString()), DateTimeOffset.Now.AddHours(12));
+            var show = await Cache.GetOrAddAsync(nameof(GetShowInformation) + theMovieDbId.ToString(),
+                async () =>
+                {
+                    await TmdbEnrichmentLimiter.WaitAsync();
+                    try
+                    {
+                        return await _movieApi.GetTVInfo(theMovieDbId.ToString());
+                    }
+                    finally
+                    {
+                        TmdbEnrichmentLimiter.Release();
+                    }
+                }, DateTimeOffset.Now.AddHours(12));
 
             if (show == null || string.IsNullOrEmpty(show.name) || show.seasons == null)
             {
                 return seasonRequests;
             }
 
-            foreach (var tvSeason in show.seasons.Where(x => x.season_number != 0))
-            {
-                var seasonEpisodes = await Cache.GetOrAddAsync($"SeasonEpisodes|{show.id}|{tvSeason.season_number}",
-                    () => _movieApi.GetSeasonEpisodes(show.id, tvSeason.season_number, CancellationToken.None),
-                    DateTimeOffset.Now.AddHours(12));
+            var seasonTasks = show.seasons
+                .Where(x => x.season_number != 0)
+                .Select(async tvSeason =>
+                {
+                    var seasonEpisodes = await Cache.GetOrAddAsync(
+                        $"SeasonEpisodes|{show.id}|{tvSeason.season_number}",
+                        async () =>
+                        {
+                            await TmdbEnrichmentLimiter.WaitAsync();
+                            try
+                            {
+                                return await _movieApi.GetSeasonEpisodes(
+                                    show.id, tvSeason.season_number, CancellationToken.None);
+                            }
+                            finally
+                            {
+                                TmdbEnrichmentLimiter.Release();
+                            }
+                        }, DateTimeOffset.Now.AddHours(12));
 
-                if (seasonEpisodes?.episodes == null)
+                    return (Season: tvSeason, Episodes: seasonEpisodes);
+                });
+
+            var seasonResults = await Task.WhenAll(seasonTasks);
+            foreach (var seasonResult in seasonResults)
+            {
+                if (seasonResult.Episodes?.episodes == null)
                 {
                     continue;
                 }
 
-                MapSeasons(seasonRequests, tvSeason, seasonEpisodes);
+                MapSeasons(seasonRequests, seasonResult.Season, seasonResult.Episodes);
             }
 
             return seasonRequests;
@@ -337,11 +402,13 @@ namespace Ombi.Core.Engine.V2
             }
         }
 
-        private async Task<SearchTvShowViewModel> ProcessResult<T>(T tvMazeSearch, List<SeasonRequests> seasonRequests)
+        private async Task<SearchTvShowViewModel> ProcessResult<T>(T tvMazeSearch, List<SeasonRequests> seasonRequests = null)
         {
             var item = _mapper.Map<SearchTvShowViewModel>(tvMazeSearch);
-            // The availability rules use the seasons to set FullyAvailable/PartlyAvailable
-            item.SeasonRequests = seasonRequests;
+            if (seasonRequests != null)
+            {
+                item.SeasonRequests = seasonRequests;
+            }
 
             await RunSearchRules(item);
             return item;

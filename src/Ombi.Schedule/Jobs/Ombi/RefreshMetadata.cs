@@ -299,13 +299,25 @@ namespace Ombi.Schedule.Jobs.Ombi
                         _log.LogDebug(e, $"Could not find the metadata for title: '{movie.Title}', skipping");
                         continue;
                     }
-                    var guids = new List<string>();
+                    var meta = metaData?.MediaContainer?.Metadata?.FirstOrDefault();
+                    if (meta == null)
+                    {
+                        // Plex can return 404/default for a stale rating key. The API wrapper
+                        // already logs the failed request; avoid turning that into a second
+                        // NullReferenceException that aborts the entire metadata refresh job.
+                        _log.LogDebug("Plex returned no metadata for title '{Title}' (key {Key}); skipping this item",
+                            movie.Title, movie.Key);
+                        continue;
+                    }
 
-                    var meta = metaData.MediaContainer.Metadata.FirstOrDefault();
-                    guids.Add(meta.guid);
+                    var guids = new List<string>();
+                    if (!string.IsNullOrWhiteSpace(meta.guid))
+                    {
+                        guids.Add(meta.guid);
+                    }
                     if (meta.Guid != null)
                     {
-                        foreach (var g in meta.Guid)
+                        foreach (var g in meta.Guid.Where(x => !string.IsNullOrWhiteSpace(x?.Id)))
                         {
                             guids.Add(g.Id);
                         }
@@ -446,14 +458,14 @@ namespace Ombi.Schedule.Jobs.Ombi
             _log.LogInformation("The Media item {0} does not have a TheMovieDbId, searching for TheMovieDbId", title);
             FindResult result = null;
             var hasResult = false;
-            if (hasTvDbId)
+            if (hasTvDbId && !string.IsNullOrWhiteSpace(tvdbID))
             {
                 result = await _movieApi.Find(tvdbID, ExternalSource.tvdb_id);
                 hasResult = result?.tv_results?.Length > 0;
 
                 _log.LogInformation("Setting Show {0} because we have TvDbId, result: {1}", title, hasResult);
             }
-            if (hasImdb && !hasResult)
+            if (hasImdb && !string.IsNullOrWhiteSpace(imdbId) && !hasResult)
             {
                 result = await _movieApi.Find(imdbId, ExternalSource.imdb_id);
                 if (movie)
@@ -528,26 +540,29 @@ namespace Ombi.Schedule.Jobs.Ombi
             _log.LogInformation("The media item {0} does not have a TvDbId, searching for TvDbId", title);
             if (hasTheMovieDb)
             {
-                _log.LogInformation("The show {0} has theMovieDBId but not ImdbId, searching for ImdbId", title);
+                _log.LogInformation("The show {0} has TheMovieDbId but not TvDbId, searching for TvDbId", title);
                 if (int.TryParse(theMovieDbId, out var id))
                 {
                     var result = await _movieApi.GetTvExternals(id);
-
-                    return result.tvdb_id.ToString();
+                    if (result?.tvdb_id > 0)
+                    {
+                        return result.tvdb_id.ToString();
+                    }
                 }
             }
 
-            if (hasImdb)
+            if (hasImdb && imdbId.HasValue())
             {
-                _log.LogInformation("The show {0} has ImdbId but not ImdbId, searching for ImdbId", title);
+                _log.LogInformation("The show {0} has ImdbId but not TvDbId, searching for TvDbId", title);
                 var result = await _movieApi.Find(imdbId, ExternalSource.imdb_id);
-                if (result?.tv_results?.Length > 0)
+                var movieId = result?.tv_results?.FirstOrDefault()?.id ?? 0;
+                if (movieId > 0)
                 {
-                    var movieId = result.tv_results?[0]?.id ?? 0;
-
                     var externalResult = await _movieApi.GetTvExternals(movieId);
-
-                    return externalResult.imdb_id;
+                    if (externalResult?.tvdb_id > 0)
+                    {
+                        return externalResult.tvdb_id.ToString();
+                    }
                 }
             }
             return string.Empty;
