@@ -353,40 +353,6 @@ namespace Ombi.Core.Engine.V2
             return seasonRequests;
         }
 
-        /// <summary>
-        /// Builds the season and episode information used to determine how much of a show we
-        /// already have. Always returns a new list, the caller must not write it back onto any
-        /// cached object.
-        /// </summary>
-        private async Task<List<SeasonRequests>> GetSeasonsForAvailability(int theMovieDbId)
-        {
-            var seasonRequests = new List<SeasonRequests>();
-
-            var show = await Cache.GetOrAddAsync(nameof(GetShowInformation) + theMovieDbId,
-                () => _movieApi.GetTVInfo(theMovieDbId.ToString()), DateTimeOffset.Now.AddHours(12));
-
-            if (show == null || string.IsNullOrEmpty(show.name) || show.seasons == null)
-            {
-                return seasonRequests;
-            }
-
-            foreach (var tvSeason in show.seasons.Where(x => x.season_number != 0))
-            {
-                var seasonEpisodes = await Cache.GetOrAddAsync($"SeasonEpisodes|{show.id}|{tvSeason.season_number}",
-                    () => _movieApi.GetSeasonEpisodes(show.id, tvSeason.season_number, CancellationToken.None),
-                    DateTimeOffset.Now.AddHours(12));
-
-                if (seasonEpisodes?.episodes == null)
-                {
-                    continue;
-                }
-
-                MapSeasons(seasonRequests, tvSeason, seasonEpisodes);
-            }
-
-            return seasonRequests;
-        }
-
         private static void MapSeasons(List<SeasonRequests> seasonRequests, Season tvSeason, SeasonDetails seasonEpisodes)
         {
             foreach (var episode in seasonEpisodes.episodes)
