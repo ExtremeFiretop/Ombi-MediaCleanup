@@ -1,3 +1,29 @@
+## [4.60.92](https://github.com/ExtremeFiretop/Reqestra/compare/v4.60.90...v4.60.92) (2026-10-01)
+
+
+### Reverts
+
+* Revert "Restore Reqestra changelog after merge conflict" ([1f9e686](https://github.com/ExtremeFiretop/Reqestra/commit/1f9e68665f2e680d4b70001bb29232eb88de5b9b))
+
+
+
+## [4.60.19](https://github.com/ExtremeFiretop/Reqestra/compare/v4.60.18...v4.60.19) (2026-09-20)
+
+
+
+## [4.60.18](https://github.com/ExtremeFiretop/Reqestra/compare/v4.60.45...v4.60.18) (2026-09-20)
+
+
+
+## [4.60.17](https://github.com/ExtremeFiretop/Reqestra/compare/v4.60.38...v4.60.17) (2026-09-15)
+
+
+### Bug Fixes
+
+* stop the TV discover endpoints duplicating episode data ([#5472](https://github.com/ExtremeFiretop/Reqestra/issues/5472)) ([#5473](https://github.com/ExtremeFiretop/Reqestra/issues/5473)) ([44e5749](https://github.com/ExtremeFiretop/Reqestra/commit/44e5749b2026bf73a6dffb605feadbfd94eac75f))
+
+
+
 ## [4.60.90](https://github.com/ExtremeFiretop/Reqestra/compare/v4.60.89...v4.60.90) (2026-10-01)
 
 
@@ -186,16 +212,6 @@
 ### Bug Fixes
 
 * **tv:** resolve missing provider IDs before availability checks ([963ad72](https://github.com/ExtremeFiretop/Reqestra/commit/963ad72731e4b76e14c6b7f9087c88b4d3708005))
-
-
-
-## [4.60.51](https://github.com/ExtremeFiretop/Reqestra/compare/v4.60.50...v4.60.51) (2026-09-22)
-
-
-### Bug Fixes
-
-* **notifications:** harden legacy mobile recipient handling ([85caf3c](https://github.com/ExtremeFiretop/Reqestra/commit/85caf3cc3f7d54c6b0624a5d459133d011d3ab0d))
-* **tv:** prevent duplicate watchlist requests across provider ID changes ([4f2b833](https://github.com/ExtremeFiretop/Reqestra/commit/4f2b833c983cac8bba9853e3737f3436e37e6fa6))
 
 
 
