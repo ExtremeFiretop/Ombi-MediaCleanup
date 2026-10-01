@@ -27,7 +27,8 @@ namespace Ombi.Tests.Middlewear
             {
                 Id = "activity-user-id",
                 UserName = "activity-user",
-                UserType = UserType.LocalUser
+                UserType = UserType.LocalUser,
+                StreamingCountry = "US"
             };
 
             var userManager = MockHelper.MockUserManager(new List<OmbiUser> { user });
@@ -92,7 +93,8 @@ namespace Ombi.Tests.Middlewear
             {
                 Id = "activity-user-id",
                 UserName = "activity-user",
-                UserType = UserType.LocalUser
+                UserType = UserType.LocalUser,
+                StreamingCountry = "US"
             };
 
             var userManager = MockHelper.MockUserManager(new List<OmbiUser> { user });
