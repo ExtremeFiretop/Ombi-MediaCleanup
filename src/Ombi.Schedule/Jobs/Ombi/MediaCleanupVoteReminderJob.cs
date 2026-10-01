@@ -171,8 +171,8 @@ namespace Ombi.Schedule.Jobs.Ombi
                 {
                     failed++;
                     _logger.LogWarning(ex,
-                        "Could not send Media Cleanup vote reminder to {UserName} ({UserId}) at {Email}",
-                        user.UserName, user.Id, email);
+                        "Could not send Media Cleanup vote reminder to {UserName} ({UserId})",
+                        user.UserName, user.Id);
                 }
             }
 

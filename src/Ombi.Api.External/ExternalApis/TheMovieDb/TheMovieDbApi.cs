@@ -637,8 +637,8 @@ namespace Ombi.Api.External.ExternalApis.TheMovieDb
             }
 
             Logger?.LogWarning(
-                "Skipping TMDB {Operation} request because '{TmdbId}' is not a positive numeric TMDB ID",
-                operation, tmdbId);
+                "Skipping TMDB {Operation} request because the supplied TMDB ID is not a positive numeric value",
+                operation);
             parsedTmdbId = 0;
             return false;
         }

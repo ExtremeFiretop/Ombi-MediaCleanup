@@ -206,8 +206,8 @@ namespace Ombi.Notifications
                 {
                     var delay = DnsRetryDelays[attempt];
                     _log.LogWarning(
-                        "DNS resolution failed for SMTP host {Host}: {Message}. Retrying in {DelaySeconds} seconds (attempt {NextAttempt}/{TotalAttempts})",
-                        settings.Host, ex.Message, delay.TotalSeconds, attempt + 2, DnsRetryDelays.Length + 1);
+                        "DNS resolution failed for the configured SMTP server. Retrying in {DelaySeconds} seconds (attempt {NextAttempt}/{TotalAttempts})",
+                        delay.TotalSeconds, attempt + 2, DnsRetryDelays.Length + 1);
                     await Task.Delay(delay);
                 }
             }

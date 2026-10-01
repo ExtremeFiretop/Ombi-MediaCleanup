@@ -294,8 +294,8 @@ namespace Ombi.Api
                     {
                         var delay = DnsRetryDelays[attempt];
                         Logger.LogWarning(LoggingEvents.Api,
-                            "DNS resolution failed for {Host}: {Message}. Retrying in {DelaySeconds} seconds (attempt {NextAttempt}/{TotalAttempts})",
-                            template.RequestUri?.Host, ex.Message, delay.TotalSeconds, attempt + 2, DnsRetryDelays.Length + 1);
+                            "DNS resolution failed for an external API request. Retrying in {DelaySeconds} seconds (attempt {NextAttempt}/{TotalAttempts})",
+                            delay.TotalSeconds, attempt + 2, DnsRetryDelays.Length + 1);
                         await Task.Delay(delay, cancellationToken);
                     }
                 }
@@ -304,7 +304,10 @@ namespace Ombi.Api
 
         private static string SafeUriForLogging(Uri uri)
         {
-            return uri?.GetLeftPart(UriPartial.Path) ?? string.Empty;
+            // Keep query strings out of logs and neutralize control characters that could forge log entries.
+            return (uri?.GetLeftPart(UriPartial.Path) ?? string.Empty)
+                .Replace("\r", string.Empty)
+                .Replace("\n", string.Empty);
         }
 
         private static bool IsDnsResolutionFailure(HttpRequestException exception)
