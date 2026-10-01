@@ -2,10 +2,12 @@ using System;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Ombi.Core.Authentication;
+using Ombi.Store.Context;
 using Ombi.Store.Entities;
 
 namespace Ombi
@@ -72,15 +74,12 @@ namespace Ombi
 
             try
             {
-                // Identity's EF user store shares the request-scoped OmbiContext with request
-                // repositories. If a LastActive update loses an optimistic-concurrency race,
-                // Identity can leave the failed OmbiUser entity tracked as Modified. A later
-                // SaveChanges for the user's real request can then retry that stale user update
-                // and fail the unrelated request. Keep activity tracking in its own scope so any
-                // failed Identity update and its change tracker are disposed before the request
-                // pipeline continues.
+                // Keep activity tracking in its own scope. LastActive is telemetry rather than
+                // an Identity mutation, so the actual write below targets only that column and
+                // deliberately does not participate in Identity's ConcurrencyStamp handling.
                 using var activityScope = _scopeFactory.CreateScope();
                 var userManager = activityScope.ServiceProvider.GetRequiredService<OmbiUserManager>();
+                var db = activityScope.ServiceProvider.GetRequiredService<OmbiContext>();
 
                 OmbiUser user;
                 if (!string.IsNullOrWhiteSpace(userId))
@@ -108,34 +107,38 @@ namespace Ombi
                     return;
                 }
 
-                // Only throttle after a real Ombi user has been resolved. A bad/missing identity
-                // lookup must not suppress subsequent activity attempts for a full minute. Recheck
-                // here as well so parallel requests that passed the first cache check do not all write.
+                // Only throttle after a real Ombi user has been resolved. The cache is an
+                // optimization; the database predicate below is the authoritative throttle and
+                // makes simultaneous requests for the same account safe.
                 if (cache.TryGetValue(cacheKey, out _))
                 {
                     return;
                 }
 
+                var now = DateTime.UtcNow;
+                var cutoff = now - ActivityWriteInterval;
+
+                // Do not call UserManager.UpdateAsync here. That updates an Identity user and
+                // checks/rotates ConcurrencyStamp, so two devices using the same account can race.
+                // ExecuteUpdateAsync issues a targeted UPDATE for LastActive only. The cutoff is
+                // part of the UPDATE predicate, so concurrent requests do not need an
+                // Identity-level optimistic-concurrency update.
+                var updated = await db.Users
+                    .Where(x => x.Id == user.Id &&
+                                (!x.LastActive.HasValue || x.LastActive.Value < cutoff))
+                    .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(x => x.LastActive, (DateTime?)now));
+
+                // Cache only after the database operation succeeds. If the write fails, a later
+                // request may retry; if another request already won the race, updated is zero and
+                // we still establish the normal one-minute throttle.
                 cache.Set(cacheKey, true, ActivityWriteInterval);
 
-                var now = DateTime.UtcNow;
-                if (user.LastActive.HasValue && now - user.LastActive.Value < ActivityWriteInterval)
+                if (updated == 0)
                 {
                     _logger.LogDebug(
-                        "Skipping LastActive update for Ombi user {UserName}; previous activity was {LastActive}",
-                        user.UserName,
-                        user.LastActive.Value);
-                    return;
-                }
-
-                user.LastActive = now;
-                var result = await userManager.UpdateAsync(user);
-                if (!result.Succeeded)
-                {
-                    _logger.LogWarning("Could not update LastActive for Ombi user {UserName}: {Errors}",
-                        user.UserName,
-                        string.Join("; ", result.Errors.Select(x => x.Description)));
-                    cache.Remove(cacheKey);
+                        "Skipping LastActive update for Ombi user {UserName}; activity was already recorded recently",
+                        user.UserName);
                     return;
                 }
 
@@ -143,12 +146,13 @@ namespace Ombi
                     "Updated LastActive for Ombi user {UserName} ({UserId}) to {LastActive}",
                     user.UserName,
                     user.Id,
-                    user.LastActive);
+                    now);
             }
             catch (Exception ex)
             {
                 // Activity tracking must never prevent the user's real request from running.
-                cache.Remove(cacheKey);
+                // The cache is populated only after a successful database operation, so there is
+                // nothing to remove here on failure.
                 _logger.LogWarning(ex, "Could not update LastActive for Ombi user {UserName}", userName);
             }
         }
