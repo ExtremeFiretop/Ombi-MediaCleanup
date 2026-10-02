@@ -1,3 +1,18 @@
+## [4.61.3](https://github.com/ExtremeFiretop/Reqestra/compare/v4.61.2...v4.61.3) (2026-10-02)
+
+
+### Bug Fixes
+
+* **ci:** provide version metadata to Docker build ([513f557](https://github.com/ExtremeFiretop/Reqestra/commit/513f55781d8abafbd9650cc3f196e3e7d4af56a5))
+* **metadata:** repair legacy invalid TMDB identifiers ([3340005](https://github.com/ExtremeFiretop/Reqestra/commit/33400053090c017959c6f3d489eee49d44503faa))
+
+
+### Reverts
+
+* Revert "test(e2e): stabilize discover card state tests" ([d235b4e](https://github.com/ExtremeFiretop/Reqestra/commit/d235b4e048ac7757d81d13a44818554c09bdd35e))
+
+
+
 ## [4.61.2](https://github.com/ExtremeFiretop/Reqestra/compare/v4.61.1...v4.61.2) (2026-10-02)
 
 
