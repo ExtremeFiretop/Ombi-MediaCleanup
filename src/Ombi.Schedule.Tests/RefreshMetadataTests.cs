@@ -1,8 +1,11 @@
-﻿using System.Reflection;
+﻿using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Moq;
 using Moq.AutoMock;
+using MockQueryable.Moq;
 using NUnit.Framework;
 using AutoMapper;
 using Ombi.Api;
@@ -11,6 +14,8 @@ using Ombi.Api.External.ExternalApis.TheMovieDb.Models;
 using Ombi.Core.Settings;
 using Ombi.Core.Settings.Models.External;
 using Ombi.Schedule.Jobs.Ombi;
+using Ombi.Store.Entities;
+using Ombi.Store.Repository;
 
 namespace Ombi.Schedule.Tests
 {
@@ -25,6 +30,53 @@ namespace Ombi.Schedule.Tests
         {
             _mocker = new AutoMocker();
             _subject = _mocker.CreateInstance<RefreshMetadata>();
+        }
+
+        [TestCase(null, false)]
+        [TestCase("", false)]
+        [TestCase("tt1234567", false)]
+        [TestCase("0", false)]
+        [TestCase("-1", false)]
+        [TestCase("98765", true)]
+        public void HasTvDb_RequiresPositiveNumericTvDbId(string tvDbId, bool expected)
+        {
+            var content = new PlexServerContent { TvDbId = tvDbId };
+
+            Assert.That(content.HasTvDb, Is.EqualTo(expected));
+        }
+
+        [Test]
+        public async Task StartPlex_WithLegacyImdbValueStoredAsTvDbId_RepairsPersistedTvDbId()
+        {
+            var show = new PlexServerContent
+            {
+                Title = "Example Show",
+                Type = MediaType.Series,
+                TheMovieDbId = "42",
+                ImdbId = "tt1234567",
+                TvDbId = "tt1234567"
+            };
+
+            _mocker.GetMock<IPlexContentRepository>()
+                .Setup(x => x.GetAll())
+                .Returns(new List<PlexServerContent> { show }.AsQueryable().BuildMock());
+            _mocker.GetMock<IPlexContentRepository>()
+                .Setup(x => x.SaveChangesAsync())
+                .ReturnsAsync(1);
+            _mocker.GetMock<IMovieDbApi>()
+                .Setup(x => x.GetTvExternals(42))
+                .ReturnsAsync(new TvExternals
+                {
+                    imdb_id = "tt1234567",
+                    tvdb_id = 98765
+                });
+
+            await InvokeStartPlex(new PlexSettings());
+
+            Assert.That(show.TvDbId, Is.EqualTo("98765"));
+            Assert.That(show.HasTvDb, Is.True);
+            _mocker.GetMock<IPlexContentRepository>()
+                .Verify(x => x.UpdateWithoutSave(show), Times.Once);
         }
 
         [Test]
@@ -173,6 +225,15 @@ namespace Ombi.Schedule.Tests
             });
 
             Assert.That(api.Invocations, Is.Empty);
+        }
+
+        private async Task InvokeStartPlex(PlexSettings settings)
+        {
+            var method = typeof(RefreshMetadata).GetMethod("StartPlex", BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(method, Is.Not.Null);
+
+            var task = (Task)method.Invoke(_subject, new object[] { settings });
+            await task;
         }
 
         private async Task<string> InvokeGetTvDbId(bool hasTheMovieDb, bool hasImdb, string theMovieDbId, string imdbId, string title)

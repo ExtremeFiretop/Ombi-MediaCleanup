@@ -122,7 +122,9 @@ namespace Ombi.Schedule.Jobs.Ombi
 
             // Now Tv
             var allTv = await _plexRepo.GetAll().Where(x =>
-                x.Type == MediaType.Series && x.RequestId == null && (x.TheMovieDbId == null || x.ImdbId == null || x.TvDbId == null)).ToListAsync();
+                x.Type == MediaType.Series && x.RequestId == null &&
+                (x.TheMovieDbId == null || x.ImdbId == null || x.TvDbId == null ||
+                 x.TvDbId == string.Empty || x.TvDbId == "0" || x.TvDbId.StartsWith("tt"))).ToListAsync();
             await StartPlexTv(allTv);
         }
 
@@ -151,7 +153,7 @@ namespace Ombi.Schedule.Jobs.Ombi
                 }
                 var hasImdb = show.ImdbId.HasValue();
                 var hasTheMovieDb = show.TheMovieDbId.HasValue();
-                var hasTvDbId = show.TvDbId.HasValue();
+                var hasTvDbId = show.HasTvDb;
 
                 if (!hasTheMovieDb)
                 {
@@ -179,13 +181,15 @@ namespace Ombi.Schedule.Jobs.Ombi
         private async Task StartEmbyTv()
         {
             var allTv = await _embyRepo.GetAll().Where(x =>
-                x.Type == MediaType.Series && (x.TheMovieDbId == null || x.ImdbId == null || x.TvDbId == null)).ToListAsync();
+                x.Type == MediaType.Series &&
+                (x.TheMovieDbId == null || x.ImdbId == null || x.TvDbId == null ||
+                 x.TvDbId == string.Empty || x.TvDbId == "0" || x.TvDbId.StartsWith("tt"))).ToListAsync();
 
             foreach (var show in allTv)
             {
                 var hasImdb = show.ImdbId.HasValue();
                 var hasTheMovieDb = show.TheMovieDbId.HasValue();
-                var hasTvDbId = show.TvDbId.HasValue();
+                var hasTvDbId = show.HasTvDb;
 
                 if (!hasTheMovieDb)
                 {
@@ -214,13 +218,15 @@ namespace Ombi.Schedule.Jobs.Ombi
         private async Task StartJellyfinTv()
         {
             var allTv = await _jellyfinRepo.GetAll().Where(x =>
-                x.Type == MediaType.Series && (x.TheMovieDbId == null || x.ImdbId == null || x.TvDbId == null)).ToListAsync();
+                x.Type == MediaType.Series &&
+                (x.TheMovieDbId == null || x.ImdbId == null || x.TvDbId == null ||
+                 x.TvDbId == string.Empty || x.TvDbId == "0" || x.TvDbId.StartsWith("tt"))).ToListAsync();
 
             foreach (var show in allTv)
             {
                 var hasImdb = show.ImdbId.HasValue();
                 var hasTheMovieDb = show.TheMovieDbId.HasValue();
-                var hasTvDbId = show.TvDbId.HasValue();
+                var hasTvDbId = show.HasTvDb;
 
                 if (!hasTheMovieDb)
                 {
