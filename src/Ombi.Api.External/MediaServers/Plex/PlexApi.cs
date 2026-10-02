@@ -414,6 +414,7 @@ namespace Ombi.Api.External.MediaServers.Plex
         {
             var request = new Request(string.Empty, CommunityApiUri, HttpMethod.Post);
             request.IgnoreBaseUrlAppend = true;
+            request.DeserializeErrorResponse = false;
             await AddHeaders(request, adminToken);
             request.AddJsonBody(new { query = AllFriendsQuery, operationName = "GetAllFriends" });
 
@@ -424,6 +425,7 @@ namespace Ombi.Api.External.MediaServers.Plex
         {
             var request = new Request(string.Empty, CommunityApiUri, HttpMethod.Post);
             request.IgnoreBaseUrlAppend = true;
+            request.DeserializeErrorResponse = false;
             await AddHeaders(request, adminToken);
             request.AddJsonBody(new
             {

@@ -128,6 +128,12 @@ namespace Ombi.Api
                     // default value rather than throwing a misleading deserialization exception.
                     var errorString = await httpResponseMessage.Content.ReadAsStringAsync(cancellationToken);
                     LogDebugContent(errorString);
+
+                    if (!request.DeserializeErrorResponse)
+                    {
+                        return (default, false);
+                    }
+
                     try
                     {
                         if (request.ContentType == ContentType.Json)
