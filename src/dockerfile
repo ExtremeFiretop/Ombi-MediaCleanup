@@ -30,6 +30,11 @@ COPY ["Ombi.Store/Ombi.Store.csproj", "Ombi.Store/"]
 RUN dotnet restore Ombi/Ombi.csproj
 
 COPY . .
+
+# Ombi.csproj links ../../version.json, which resolves to /version.json
+# inside this build stage. Materialize it from the CI-calculated version.
+RUN printf '{\n  "version": "%s"\n}\n' "$VERSION" > /version.json
+
 RUN dotnet publish Ombi/Ombi.csproj -c Release --no-restore -o /app/publish
 
 # Stage 3: Final runtime image
