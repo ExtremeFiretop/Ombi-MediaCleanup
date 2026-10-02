@@ -1,3 +1,13 @@
+## [4.61.1](https://github.com/ExtremeFiretop/Reqestra/compare/v4.61.0...v4.61.1) (2026-10-02)
+
+
+### Bug Fixes
+
+* **api:** skip Plex Community error-body deserialization ([8ef59cc](https://github.com/ExtremeFiretop/Reqestra/commit/8ef59cc7a803bf06d4859c8969894707e516759a))
+* **media-cleanup:** backfill legacy scheduled deletion plans ([411edcf](https://github.com/ExtremeFiretop/Reqestra/commit/411edcffba33e01d3a913fbaa241337f22e61dc6))
+
+
+
 # [4.61.0](https://github.com/ExtremeFiretop/Reqestra/compare/v4.60.92...v4.61.0) (2026-10-01)
 
 
