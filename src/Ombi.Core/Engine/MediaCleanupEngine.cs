@@ -1282,12 +1282,12 @@ namespace Ombi.Core.Engine
                 var state = await LoadState();
                 var now = DateTime.UtcNow;
 
-                // Cleanups already in ScheduledForDeletion were authorized by the legacy
-                // workflow before deletion-plan snapshotting existed. Freeze the current
-                // destructive settings/destination once and persist that compatibility
-                // snapshot before any external deletion. The existing status and scheduled
-                // deletion time are left unchanged.
-                if (await BackfillLegacyScheduledDeletionPlans(state, settings) &&
+                // Cleanups already in ScheduledForDeletion can predate either deletion-plan
+                // snapshotting entirely or the version 2 authorization snapshot. Migrate those
+                // legacy records once and persist the compatibility state before any external
+                // deletion. Existing version 1 destructive flags/targets and all scheduled
+                // deletion times are preserved.
+                if (await BackfillLegacyScheduledDeletionPlans(state, settings, now) &&
                     !await TrySaveState(state, "backfilling deletion plans for legacy scheduled Media Cleanup records"))
                 {
                     return;
@@ -1314,7 +1314,8 @@ namespace Ombi.Core.Engine
                     if (record.Status == MediaCleanupStatus.ScheduledForDeletion &&
                         deletionDueAt.HasValue &&
                         IsDeletionDue(deletionDueAt.Value, now) &&
-                        (record.ExternalDeletionCompletedAt.HasValue || IsOriginEnabled(record, settings)))
+                        (record.ExternalDeletionCompletedAt.HasValue ||
+                         (IsOriginEnabled(record, settings) && HasSupportedDeletionPlan(record))))
                     {
                         await ExecuteDeletion(record, settings, state);
                         changed = true;
@@ -2631,42 +2632,89 @@ namespace Ombi.Core.Engine
 
         private async Task<bool> BackfillLegacyScheduledDeletionPlans(
             MediaCleanupState state,
-            MediaCleanupSettings settings)
+            MediaCleanupSettings settings,
+            DateTime now)
         {
             var changed = false;
             var candidates = state.Requests
                 .Where(record => record != null &&
                                  record.Status == MediaCleanupStatus.ScheduledForDeletion &&
                                  record.ScheduledForDeletionAt.HasValue &&
-                                 record.DeletionPlan == null &&
-                                 !record.ExternalDeletionCompletedAt.HasValue)
+                                 !record.ExternalDeletionCompletedAt.HasValue &&
+                                 (record.DeletionPlan == null || record.DeletionPlan.Version == 1) &&
+                                 !(record.Origin == MediaCleanupOrigin.Community &&
+                                   record.VotingEndsAt.HasValue &&
+                                   record.VotingEndsAt.Value > now))
                 .ToList();
 
             foreach (var record in candidates)
             {
                 var originalSchedule = record.ScheduledForDeletionAt;
-                var migrationError = await TrySnapshotDeletionPlan(record, settings);
+                var hadVersionOnePlan = record.DeletionPlan?.Version == 1;
+                var migrationError = hadVersionOnePlan
+                    ? await TryUpgradeVersionOneDeletionPlan(record)
+                    : await TrySnapshotDeletionPlan(record, settings);
+
                 if (!string.IsNullOrEmpty(migrationError))
                 {
                     _logger.LogWarning(
-                        "Could not backfill the frozen deletion plan for legacy scheduled Media Cleanup '{Title}' ({CleanupId}); no media was deleted. Reason={Reason}",
+                        "Could not migrate the frozen deletion plan for legacy scheduled Media Cleanup '{Title}' ({CleanupId}); the record will remain scheduled and no media will be deleted until migration succeeds. Reason={Reason}",
                         record.Title,
                         record.Id,
                         migrationError);
                     continue;
                 }
 
-                // Snapshot creation must not alter the already-approved legacy schedule.
+                // Compatibility migration must not alter the already-approved legacy schedule.
                 record.ScheduledForDeletionAt = originalSchedule;
                 LogCleanupAudit(
                     record,
                     "LegacyDeletionPlanMigrated",
-                    "Backfilled",
+                    hadVersionOnePlan ? "UpgradedV1ToV2" : "BackfilledMissingPlan",
                     phase: "legacy deletion-plan migration");
                 changed = true;
             }
 
             return changed;
+        }
+
+        private async Task<string> TryUpgradeVersionOneDeletionPlan(MediaCleanupRecord record)
+        {
+            try
+            {
+                var plan = record.DeletionPlan;
+                if (plan == null || plan.Version != 1)
+                {
+                    return "The cleanup does not contain a version 1 deletion plan that can be upgraded.";
+                }
+
+                if (plan.Targets == null || plan.Targets.Count == 0)
+                {
+                    return "The legacy deletion plan does not contain a frozen external destination. No media was deleted.";
+                }
+
+                // Version 1 already froze the destructive flags and external destination.
+                // Preserve those values exactly and add only the authorization snapshot that
+                // version 2 introduced. This avoids reinterpreting an old approval using the
+                // current DeleteFiles/AddImportExclusion or *arr destination settings.
+                var authorization = plan.Authorization ?? await CaptureAuthorizationSnapshot(record);
+                plan.Authorization = authorization;
+                plan.Version = 2;
+                return null;
+            }
+            catch (MediaCleanupTerminalException ex)
+            {
+                return ex.Message;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "Could not add an authorization snapshot to legacy version 1 deletion plan for {RequestType} '{Title}' ({CleanupId})",
+                    record.RequestType,
+                    record.Title,
+                    record.Id);
+                return "Ombi could not upgrade the legacy deletion plan with an authorization snapshot. No media was deleted.";
+            }
         }
 
         private async Task<string> TrySnapshotDeletionPlan(MediaCleanupRecord record, MediaCleanupSettings settings)
@@ -2966,11 +3014,16 @@ namespace Ombi.Core.Engine
             }
         }
 
+        private static bool HasSupportedDeletionPlan(MediaCleanupRecord record)
+        {
+            return record?.DeletionPlan != null &&
+                   record.DeletionPlan.Version == 2 &&
+                   record.DeletionPlan.Authorization != null;
+        }
+
         private static MediaCleanupDeletionPlan GetDeletionPlan(MediaCleanupRecord record)
         {
-            if (record.DeletionPlan == null ||
-                record.DeletionPlan.Version != 2 ||
-                record.DeletionPlan.Authorization == null)
+            if (!HasSupportedDeletionPlan(record))
             {
                 throw new MediaCleanupTerminalException(
                     "This cleanup does not contain a supported frozen deletion plan and authorization snapshot. Create/approve a new cleanup request before deleting media.");

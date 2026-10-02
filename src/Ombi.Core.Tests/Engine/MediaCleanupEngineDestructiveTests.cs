@@ -872,18 +872,71 @@ namespace Ombi.Core.Tests.Engine
         }
 
         [Test]
-        public async Task VersionOneDeletionPlan_FailsClosedBeforeExternalQuery()
+        public async Task VersionOneDeletionPlan_UpgradesAuthorizationWithoutReplacingFrozenSettingsOrTarget()
         {
             var record = AddDueMovie();
+            var originalSchedule = record.ScheduledForDeletionAt;
+            var originalAuthorizedAt = record.DeletionPlan.AuthorizedAt;
+            var originalTarget = record.DeletionPlan.Targets.Single().Endpoint;
             record.DeletionPlan.Version = 1;
             record.DeletionPlan.Authorization = null;
+            SetupMovieInRadarr(record);
+
+            // Version 1 already froze these values. Current settings must not reinterpret the
+            // existing approval while adding the version 2 authorization snapshot.
+            _cleanupSettings.DeleteFiles = false;
+            _cleanupSettings.AddImportExclusion = true;
+
+            var events = new List<string>();
+            var stateSaveCount = 0;
+            _stateService.Setup(x => x.SaveSettingsAsync(It.IsAny<MediaCleanupState>()))
+                .Callback<MediaCleanupState>(_ =>
+                {
+                    stateSaveCount++;
+                    if (stateSaveCount == 1)
+                    {
+                        Assert.That(record.DeletionPlan.Version, Is.EqualTo(2));
+                        Assert.That(record.DeletionPlan.Authorization, Is.Not.Null);
+                        Assert.That(record.DeletionPlan.Authorization.RequestClaims, Is.EqualTo(new[] { "movie:100:owner" }));
+                        Assert.That(record.DeletionPlan.DeleteFiles, Is.True);
+                        Assert.That(record.DeletionPlan.AddImportExclusion, Is.False);
+                        Assert.That(record.DeletionPlan.AuthorizedAt, Is.EqualTo(originalAuthorizedAt));
+                        Assert.That(record.DeletionPlan.Targets.Single().Endpoint, Is.EqualTo(originalTarget));
+                        Assert.That(record.ScheduledForDeletionAt, Is.EqualTo(originalSchedule));
+                        events.Add("legacy-v1-plan-saved");
+                    }
+                })
+                .ReturnsAsync(true);
+            _radarr.Setup(x => x.DeleteMovie(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), true, false))
+                .Callback(() => events.Add("external-delete"))
+                .ReturnsAsync(true);
 
             await _subject.ProcessPending();
 
-            Assert.That(record.Status, Is.EqualTo(MediaCleanupStatus.Failed));
+            Assert.That(record.Status, Is.EqualTo(MediaCleanupStatus.Completed));
+            Assert.That(events, Is.EqualTo(new[] { "legacy-v1-plan-saved", "external-delete" }));
+            _radarr.Verify(x => x.DeleteMovie(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), false, true), Times.Never);
+        }
+
+        [Test]
+        public async Task VersionOneDeletionPlan_AuthorizationMigrationFailure_RemainsScheduledAndDoesNotDelete()
+        {
+            var record = AddDueMovie();
+            var originalSchedule = record.ScheduledForDeletionAt;
+            record.DeletionPlan.Version = 1;
+            record.DeletionPlan.Authorization = null;
+            _movieRequests.Setup(x => x.GetAll())
+                .Returns(new List<MovieRequests>().AsQueryable().BuildMock());
+
+            await _subject.ProcessPending();
+
+            Assert.That(record.Status, Is.EqualTo(MediaCleanupStatus.ScheduledForDeletion));
+            Assert.That(record.ScheduledForDeletionAt, Is.EqualTo(originalSchedule));
+            Assert.That(record.DeletionPlan.Version, Is.EqualTo(1));
+            Assert.That(record.DeletionPlan.Authorization, Is.Null);
             Assert.That(record.ExternalDeletionCompletedAt, Is.Null);
-            Assert.That(record.FailureReason, Does.Contain("authorization snapshot"));
             _radarr.Verify(x => x.GetMoviesForCleanup(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+            _radarr.Verify(x => x.DeleteMovie(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<bool>()), Times.Never);
         }
 
         [Test]
@@ -971,6 +1024,48 @@ namespace Ombi.Core.Tests.Engine
             Assert.That(record.DeletionPlan.DeleteFiles, Is.True);
             Assert.That(record.DeletionPlan.Targets.Single().Service, Is.EqualTo(MediaCleanupExternalService.Radarr));
             Assert.That(events, Is.EqualTo(new[] { "legacy-plan-saved", "external-delete" }));
+        }
+
+        [Test]
+        public async Task LegacyScheduledCleanup_BackfillFailure_RemainsScheduledAndDoesNotFallThroughToDeletion()
+        {
+            var record = AddDueMovie();
+            var originalSchedule = record.ScheduledForDeletionAt;
+            record.DeletionPlan = null;
+            _radarrSettings.Enabled = false;
+            _radarr4KSettings.Enabled = false;
+
+            await _subject.ProcessPending();
+
+            Assert.That(record.Status, Is.EqualTo(MediaCleanupStatus.ScheduledForDeletion));
+            Assert.That(record.ScheduledForDeletionAt, Is.EqualTo(originalSchedule));
+            Assert.That(record.DeletionPlan, Is.Null);
+            Assert.That(record.ExternalDeletionCompletedAt, Is.Null);
+            Assert.That(record.FailureReason, Is.Null);
+            _radarr.Verify(x => x.GetMoviesForCleanup(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+            _radarr.Verify(x => x.DeleteMovie(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<bool>()), Times.Never);
+        }
+
+        [Test]
+        public async Task PrematureCommunityScheduledCleanup_WithVotingStillOpen_IsNotBackfilled()
+        {
+            _cleanupSettings.OwnRequestRemoval = OwnRequestRemovalMode.Off;
+            _cleanupSettings.CommunityCleanup = CommunityCleanupMode.AutomaticAfterThreshold;
+            var record = AddDueMovie();
+            record.Origin = MediaCleanupOrigin.Community;
+            record.VotingEndsAt = DateTime.UtcNow.AddDays(1);
+            record.ApprovedByUserId = "legacy-manager";
+            record.DeletionPlan = null;
+
+            await _subject.ProcessPending();
+
+            Assert.That(record.Status, Is.EqualTo(MediaCleanupStatus.Voting));
+            Assert.That(record.ScheduledForDeletionAt, Is.Null);
+            Assert.That(record.ApprovedByUserId, Is.Null);
+            Assert.That(record.DeletionPlan, Is.Null);
+            Assert.That(record.ExternalDeletionCompletedAt, Is.Null);
+            _radarr.Verify(x => x.GetMoviesForCleanup(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+            _radarr.Verify(x => x.DeleteMovie(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<bool>()), Times.Never);
         }
 
         [Test]
