@@ -1281,6 +1281,18 @@ namespace Ombi.Core.Engine
                 var settings = await _settings.GetSettingsAsync();
                 var state = await LoadState();
                 var now = DateTime.UtcNow;
+
+                // Cleanups already in ScheduledForDeletion were authorized by the legacy
+                // workflow before deletion-plan snapshotting existed. Freeze the current
+                // destructive settings/destination once and persist that compatibility
+                // snapshot before any external deletion. The existing status and scheduled
+                // deletion time are left unchanged.
+                if (await BackfillLegacyScheduledDeletionPlans(state, settings) &&
+                    !await TrySaveState(state, "backfilling deletion plans for legacy scheduled Media Cleanup records"))
+                {
+                    return;
+                }
+
                 var changed = false;
                 var newlyPendingApproval = new List<MediaCleanupRecord>();
 
@@ -2615,6 +2627,46 @@ namespace Ombi.Core.Engine
                 Origin = origin,
                 CreatedAt = DateTime.UtcNow
             };
+        }
+
+        private async Task<bool> BackfillLegacyScheduledDeletionPlans(
+            MediaCleanupState state,
+            MediaCleanupSettings settings)
+        {
+            var changed = false;
+            var candidates = state.Requests
+                .Where(record => record != null &&
+                                 record.Status == MediaCleanupStatus.ScheduledForDeletion &&
+                                 record.ScheduledForDeletionAt.HasValue &&
+                                 record.DeletionPlan == null &&
+                                 !record.ExternalDeletionCompletedAt.HasValue)
+                .ToList();
+
+            foreach (var record in candidates)
+            {
+                var originalSchedule = record.ScheduledForDeletionAt;
+                var migrationError = await TrySnapshotDeletionPlan(record, settings);
+                if (!string.IsNullOrEmpty(migrationError))
+                {
+                    _logger.LogWarning(
+                        "Could not backfill the frozen deletion plan for legacy scheduled Media Cleanup '{Title}' ({CleanupId}); no media was deleted. Reason={Reason}",
+                        record.Title,
+                        record.Id,
+                        migrationError);
+                    continue;
+                }
+
+                // Snapshot creation must not alter the already-approved legacy schedule.
+                record.ScheduledForDeletionAt = originalSchedule;
+                LogCleanupAudit(
+                    record,
+                    "LegacyDeletionPlanMigrated",
+                    "Backfilled",
+                    phase: "legacy deletion-plan migration");
+                changed = true;
+            }
+
+            return changed;
         }
 
         private async Task<string> TrySnapshotDeletionPlan(MediaCleanupRecord record, MediaCleanupSettings settings)

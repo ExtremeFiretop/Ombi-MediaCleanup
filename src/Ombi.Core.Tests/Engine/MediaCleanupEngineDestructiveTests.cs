@@ -939,18 +939,38 @@ namespace Ombi.Core.Tests.Engine
         }
 
         [Test]
-        public async Task LegacyScheduledCleanupWithoutDeletionPlan_FailsClosed()
+        public async Task LegacyScheduledCleanupWithoutDeletionPlan_BackfillsAndDeletesWithoutReapproval()
         {
             var record = AddDueMovie();
+            var originalSchedule = record.ScheduledForDeletionAt;
             record.DeletionPlan = null;
+            SetupMovieInRadarr(record);
+
+            var events = new List<string>();
+            var stateSaveCount = 0;
+            _stateService.Setup(x => x.SaveSettingsAsync(It.IsAny<MediaCleanupState>()))
+                .Callback<MediaCleanupState>(_ =>
+                {
+                    stateSaveCount++;
+                    if (stateSaveCount == 1)
+                    {
+                        Assert.That(record.DeletionPlan, Is.Not.Null);
+                        Assert.That(record.ScheduledForDeletionAt, Is.EqualTo(originalSchedule));
+                        events.Add("legacy-plan-saved");
+                    }
+                })
+                .ReturnsAsync(true);
+            _radarr.Setup(x => x.DeleteMovie(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), true, false))
+                .Callback(() => events.Add("external-delete"))
+                .ReturnsAsync(true);
 
             await _subject.ProcessPending();
 
-            Assert.That(record.Status, Is.EqualTo(MediaCleanupStatus.Failed));
-            Assert.That(record.ExternalDeletionCompletedAt, Is.Null);
-            Assert.That(record.FailureReason, Does.Contain("authorized before destructive settings"));
-            _radarr.Verify(x => x.GetMoviesForCleanup(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
-            _radarr.Verify(x => x.DeleteMovie(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<bool>()), Times.Never);
+            Assert.That(record.Status, Is.EqualTo(MediaCleanupStatus.Completed));
+            Assert.That(record.DeletionPlan, Is.Not.Null);
+            Assert.That(record.DeletionPlan.DeleteFiles, Is.True);
+            Assert.That(record.DeletionPlan.Targets.Single().Service, Is.EqualTo(MediaCleanupExternalService.Radarr));
+            Assert.That(events, Is.EqualTo(new[] { "legacy-plan-saved", "external-delete" }));
         }
 
         [Test]
