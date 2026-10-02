@@ -1,17 +1,5 @@
 import { DiscoverType } from "@/integration/page-objects/shared/DiscoverCard";
 import { discoverPage as Page } from "@/integration/page-objects";
-import popularMovies from "@fixtures/discover/popularMovies.json";
-
-// These tests exercise Reqestra card/request state, not the contents or
-// ordering of TMDB's live Popular feed. Use the repository fixture so a newly
-// listed movie with sparse external metadata cannot change the card's loading
-// path and make the state assertions nondeterministic.
-const interceptPopularMovie = (index: number, overrides: Partial<(typeof popularMovies)[number]>) => {
-  const body = popularMovies.map((movie) => ({ ...movie }));
-  Object.assign(body[index], overrides);
-
-  cy.intercept("GET", "**/search/Movie/Popular/**", { body }).as("cardsResponse");
-};
 
 describe("Discover Cards Requests Tests", () => {
   beforeEach(() => {
@@ -19,11 +7,18 @@ describe("Discover Cards Requests Tests", () => {
   });
 
   it("Not requested movie allows admin to request", () => {
-    interceptPopularMovie(0, {
-      available: false,
-      approved: false,
-      requested: false,
-    });
+    cy.intercept("GET", "**/search/Movie/Popular/**", (req) => {
+      req.reply((res) => {
+        const body = res.body;
+        const movie = body[0];
+        movie.available = false;
+        movie.approved = false;
+        movie.requested = false;
+
+        body[0] = movie;
+        res.send(body);
+      });
+    }).as("cardsResponse");
 
     cy.intercept("POST", "**/Request/Movie", {
       result: true,
@@ -78,11 +73,18 @@ describe("Discover Cards Requests Tests", () => {
         cy.removeLogin();
         cy.loginWithCreds(id, "a");
 
-        interceptPopularMovie(6, {
-          available: false,
-          approved: false,
-          requested: false,
-        });
+        cy.intercept("GET", "**/search/Movie/Popular/**", (req) => {
+          req.reply((res) => {
+            const body = res.body;
+            const movie = body[6];
+            movie.available = false;
+            movie.approved = false;
+            movie.requested = false;
+
+            body[6] = movie;
+            res.send(body);
+          });
+        }).as("cardsResponse");
 
         cy.intercept("POST", "**/Request/Movie", {
           result: true,
@@ -130,11 +132,18 @@ describe("Discover Cards Requests Tests", () => {
     cy.then(() => {
       window.localStorage.setItem("DiscoverOptions2", "2");
     });
-    interceptPopularMovie(1, {
-      available: true,
-      approved: false,
-      requested: false,
-    });
+    cy.intercept("GET", "**/search/Movie/Popular/**", (req) => {
+      req.reply((res) => {
+        const body = res.body;
+        const movie = body[1];
+        movie.available = true;
+        movie.approved = false;
+        movie.requested = false;
+
+        body[1] = movie;
+        res.send(body);
+      });
+    }).as("cardsResponse");
 
     Page.visit();
 
@@ -157,11 +166,18 @@ describe("Discover Cards Requests Tests", () => {
     cy.then(() => {
       window.localStorage.setItem("DiscoverOptions2", "2");
     });
-    interceptPopularMovie(1, {
-      available: false,
-      approved: false,
-      requested: true,
-    });
+    cy.intercept("GET", "**/search/Movie/Popular/**", (req) => {
+      req.reply((res) => {
+        const body = res.body;
+        const movie = body[1];
+        movie.available = false;
+        movie.approved = false;
+        movie.requested = true;
+
+        body[1] = movie;
+        res.send(body);
+      });
+    }).as("cardsResponse");
 
     Page.visit();
 
@@ -184,11 +200,18 @@ describe("Discover Cards Requests Tests", () => {
     cy.then(() => {
       window.localStorage.setItem("DiscoverOptions2", "2");
     });
-    interceptPopularMovie(1, {
-      available: false,
-      approved: true,
-      requested: true,
-    });
+    cy.intercept("GET", "**/search/Movie/Popular/**", (req) => {
+      req.reply((res) => {
+        const body = res.body;
+        const movie = body[1];
+        movie.available = false;
+        movie.approved = true;
+        movie.requested = true;
+
+        body[1] = movie;
+        res.send(body);
+      });
+    }).as("cardsResponse");
 
     Page.visit();
 
