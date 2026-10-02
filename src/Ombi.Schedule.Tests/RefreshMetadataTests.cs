@@ -45,6 +45,54 @@ namespace Ombi.Schedule.Tests
             Assert.That(content.HasTvDb, Is.EqualTo(expected));
         }
 
+        [TestCase(null, false)]
+        [TestCase("", false)]
+        [TestCase(" ", false)]
+        [TestCase("0", false)]
+        [TestCase("-1", false)]
+        [TestCase("not-a-number", false)]
+        [TestCase("tt1234567", false)]
+        [TestCase("42", true)]
+        public void HasTheMovieDb_RequiresPositiveNumericTmdbId(string theMovieDbId, bool expected)
+        {
+            var content = new PlexServerContent { TheMovieDbId = theMovieDbId };
+
+            Assert.That(content.HasTheMovieDb, Is.EqualTo(expected));
+        }
+
+        [Test]
+        public async Task StartPlex_WithLegacyZeroTmdbId_RepairsPersistedTmdbId()
+        {
+            var show = new PlexServerContent
+            {
+                Title = "Example Show",
+                Type = MediaType.Series,
+                TheMovieDbId = "0",
+                ImdbId = "tt1234567",
+                TvDbId = "98765"
+            };
+
+            _mocker.GetMock<IPlexContentRepository>()
+                .Setup(x => x.GetAll())
+                .Returns(new List<PlexServerContent> { show }.AsQueryable().BuildMock());
+            _mocker.GetMock<IPlexContentRepository>()
+                .Setup(x => x.SaveChangesAsync())
+                .ReturnsAsync(1);
+            _mocker.GetMock<IMovieDbApi>()
+                .Setup(x => x.Find("98765", ExternalSource.tvdb_id))
+                .ReturnsAsync(new FindResult
+                {
+                    tv_results = new[] { new TvResults { id = 42 } }
+                });
+
+            await InvokeStartPlex(new PlexSettings());
+
+            Assert.That(show.TheMovieDbId, Is.EqualTo("42"));
+            Assert.That(show.HasTheMovieDb, Is.True);
+            _mocker.GetMock<IMovieDbApi>()
+                .Verify(x => x.Find("98765", ExternalSource.tvdb_id), Times.Once);
+        }
+
         [Test]
         public async Task StartPlex_WithLegacyImdbValueStoredAsTvDbId_RepairsPersistedTvDbId()
         {
