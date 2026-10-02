@@ -10,6 +10,7 @@ declare global {
     interface Chainable {
       ensureSetup(): Chainable<void>;
       landingSettings(enabled: boolean): Chainable<void>;
+      getAdminToken(): Chainable<string>;
       loginWithCreds(username: string, password: string): Chainable<void>;
       login(): Chainable<void>;
       removeLogin(): Chainable<void>;
@@ -80,36 +81,76 @@ Cypress.Commands.add("landingSettings", (enabled: boolean) => {
   });
 });
 
-// Enhanced login with credentials
-Cypress.Commands.add('loginWithCreds', (username: string, password: string) => {
-  cy.request({
+const requestAccessToken = (username: string, password: string): Cypress.Chainable<string> => {
+  return cy.request({
     method: 'POST',
     url: '/api/v1/token',
     body: { username, password },
-    failOnStatusCode: false
+    // Assert explicitly below so a rate-limit response is reported at the
+    // authentication step instead of surfacing later as a misleading 401.
+    failOnStatusCode: false,
   }).then((resp) => {
-    if (resp.status === 200) {
-      window.localStorage.setItem('id_token', resp.body.access_token);
-    }
+    expect(
+      resp.status,
+      `login for "${username}" should return HTTP 200 (HTTP 429 means the authentication rate limiter was hit)`
+    ).to.equal(200);
+
+    const token = resp.body?.access_token;
+    expect(token, `login response for "${username}" should contain an access token`)
+      .to.be.a('string').and.not.be.empty;
+
+    return token as string;
   });
-  
-  // Log outside of the promise chain
-  cy.log(`Login attempt for user: ${username}`);
+};
+
+// Return an admin token without changing the browser's login state. The token
+// is cached in the Cypress Node process so repeated global setup across specs
+// does not repeatedly exercise the production /api/v1/token rate limiter.
+Cypress.Commands.add('getAdminToken', () => {
+  const username = Cypress.env('username');
+  const password = Cypress.env('password');
+
+  expect(username, 'Cypress env "username" must be set for admin authentication')
+    .to.be.a('string').and.not.be.empty;
+  expect(password, 'Cypress env "password" must be set for admin authentication')
+    .to.be.a('string').and.not.be.empty;
+
+  return cy.task('getCachedAuthToken', username, { log: false }).then((cachedToken) => {
+    if (typeof cachedToken === 'string' && cachedToken.length > 0) {
+      return cachedToken;
+    }
+
+    return requestAccessToken(username, password).then((token) => {
+      return cy.task(
+        'cacheAuthToken',
+        { username, token },
+        { log: false }
+      ).then(() => token);
+    });
+  });
 });
 
-// Enhanced default login
+// Login with arbitrary credentials. This intentionally performs a fresh login
+// because several tests create distinct users and need to verify their actual
+// credentials and permissions.
+Cypress.Commands.add('loginWithCreds', (username: string, password: string) => {
+  return requestAccessToken(username, password).then((token) => {
+    window.localStorage.setItem('id_token', token);
+    cy.log(`Logged in as user: ${username}`);
+  });
+});
+
+// Default administrator login reuses the cached token. This keeps the normal
+// production rate limiter intact while avoiding dozens of identical admin
+// token requests during a single Cypress run.
 Cypress.Commands.add('login', () => {
   cy.clearLocalStorage();
   cy.clearCookies();
-  
-  const username = Cypress.env('username');
-  const password = Cypress.env('password');
-  
-  if (!username || !password) {
-    throw new Error('Username and password must be set in environment variables');
-  }
-  
-  cy.loginWithCreds(username, password);
+
+  return cy.getAdminToken().then((token) => {
+    window.localStorage.setItem('id_token', token);
+    cy.log('Restored administrator authentication');
+  });
 });
 
 // Enhanced login removal

@@ -21,24 +21,14 @@ declare global {
 // "not requested" state these specs assume. Clearing up-front makes the suite
 // idempotent and order-independent.
 //
-// This authenticates as the admin directly (it runs before any UI login, so it
-// cannot rely on a token in localStorage) and is intentionally tolerant of
-// failures - if the admin doesn't exist yet or an individual delete fails there
-// is simply nothing to clean up, and we must not fail the whole spec here.
+// This needs an admin token before any UI login, but it must not generate a
+// fresh /api/v1/token request for every spec. getAdminToken() reuses the token
+// cached by the Cypress Node process without changing localStorage, so login
+// tests still begin unauthenticated. Authentication failures are no longer
+// swallowed; a 429 now fails here with the real cause instead of causing later
+// 401/no-token errors. Individual cleanup calls remain best-effort.
 Cypress.Commands.add('clearAllRequests', () => {
-    const username = Cypress.env('username');
-    const password = Cypress.env('password');
-
-    cy.request({
-        method: 'POST',
-        url: '/api/v1/token',
-        body: { username, password },
-        failOnStatusCode: false,
-    }).then((tokenResp) => {
-        const token = tokenResp.status === 200 ? tokenResp.body?.access_token : undefined;
-        if (!token) {
-            return;
-        }
+    cy.getAdminToken().then((token) => {
         const headers = { Authorization: `Bearer ${token}` };
 
         // Movies have a bulk-delete endpoint.

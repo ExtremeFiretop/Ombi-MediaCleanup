@@ -251,8 +251,11 @@ jobs:
         working-directory: tests
         wait-on: http://localhost:3577/
         wait-on-timeout: 600
+        # The smoke step above already runs cypress/tests/login/login.spec.ts.
+        # Keep this step to the remaining suites so authentication scenarios are
+        # not exercised twice against the same rate-limited backend process.
         spec: >-
-          cypress/tests/**/*
+          cypress/tests/{api,details,discover,navigation,requests,search,settings,user-preferences,usermanagement}/**/*.spec.ts
       env:
         CYPRESS_RECORD_KEY: ${{ secrets.CYPRESS_RECORD_KEY_SQLITE }}
         CYPRESS_PROJECT_ID: ${{ secrets.CYPRESS_PROJECT_ID_SQLITE }}
