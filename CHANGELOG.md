@@ -1,3 +1,13 @@
+## [4.61.2](https://github.com/ExtremeFiretop/Reqestra/compare/v4.61.1...v4.61.2) (2026-10-02)
+
+
+### Bug Fixes
+
+* **media-cleanup:** harden legacy deletion-plan migration ([83c08db](https://github.com/ExtremeFiretop/Reqestra/commit/83c08db82504fdf719f01d5450f8bdc6ef15509d))
+* **metadata:** repair legacy invalid TVDB identifiers ([ea099f5](https://github.com/ExtremeFiretop/Reqestra/commit/ea099f59b55f560c57d5c07c05587d805cdf988c))
+
+
+
 ## [4.61.1](https://github.com/ExtremeFiretop/Reqestra/compare/v4.61.0...v4.61.1) (2026-10-02)
 
 
