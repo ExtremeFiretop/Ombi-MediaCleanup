@@ -1,11 +1,9 @@
 ﻿using System;
 using System.Diagnostics;
-using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Net;
-using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
@@ -102,7 +100,7 @@ namespace Ombi.Schedule.Jobs.Ombi
                 return;
             }
 
-            var currentLocation = Path.GetDirectoryName(Assembly.GetEntryAssembly().Location);
+            var currentLocation = Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory);
             Logger.LogDebug(LoggingEvents.Updater, "Path: {0}", currentLocation);
 
             var productVersion = AssemblyHelper.GetRuntimeVersion();
@@ -146,50 +144,29 @@ namespace Ombi.Schedule.Jobs.Ombi
                         Logger.LogWarning(notifyEx, "Failed to send updater start notification");
                     }
 
-                    // Let's download the correct zip
+                    // Reqestra release assets use the RID-based names produced by build.yml.
+                    // Match the exact artifact for this OS/architecture instead of the old Ombi
+                    // names (for example windows.* / linux.*), which no longer exist.
                     var desc = RuntimeInformation.OSDescription;
                     var process = RuntimeInformation.ProcessArchitecture;
+                    var expectedAssetName = GetReleaseAssetName(process);
 
                     Logger.LogDebug(LoggingEvents.Updater, "OS Information: {0} {1}", desc, process);
-                    Downloads download;
-                    if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                    if (expectedAssetName.IsNullOrEmpty())
                     {
-                        Logger.LogDebug(LoggingEvents.Updater, "We are Windows");
-                        if (process == Architecture.X64)
-                        {
-                            download = updates.Downloads.FirstOrDefault(x =>
-                                x.Name.Contains("windows.", CompareOptions.IgnoreCase));
-                        }
-                        else
-                        {
-                            download = updates.Downloads.FirstOrDefault(x =>
-                                x.Name.Contains("windows-32bit", CompareOptions.IgnoreCase));
-                        }
+                        Logger.LogWarning(LoggingEvents.Updater,
+                            "Reqestra does not publish an automatic-update artifact for this platform: {0} {1}",
+                            desc, process);
+                        return;
                     }
-                    else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-                    {
-                        Logger.LogDebug(LoggingEvents.Updater, "We are OSX");
-                        download = updates.Downloads.FirstOrDefault(x => x.Name.Contains("osx", CompareOptions.IgnoreCase));
-                    }
-                    else
-                    {
-                        Logger.LogDebug(LoggingEvents.Updater, "We are linux");
-                        if (process == Architecture.Arm)
-                        {
-                            download = updates.Downloads.FirstOrDefault(x => x.Name.Contains("arm.", CompareOptions.IgnoreCase));
-                        }
-                        else if (process == Architecture.Arm64)
-                        {
-                            download = updates.Downloads.FirstOrDefault(x => x.Name.Contains("arm64.", CompareOptions.IgnoreCase));
-                        }
-                        else
-                        {
-                            download = updates.Downloads.FirstOrDefault(x => x.Name.Contains("linux.", CompareOptions.IgnoreCase));
-                        }
-                    }
+
+                    var download = updates.Downloads.FirstOrDefault(x =>
+                        string.Equals(x.Name, expectedAssetName, StringComparison.OrdinalIgnoreCase));
                     if (download == null)
                     {
-                        Logger.LogDebug(LoggingEvents.Updater, "There were no downloads");
+                        Logger.LogWarning(LoggingEvents.Updater,
+                            "Reqestra release did not contain the expected update artifact {0}",
+                            expectedAssetName);
                         return;
                     }
 
@@ -248,12 +225,21 @@ namespace Ombi.Schedule.Jobs.Ombi
                     {
                         updaterExtension = ".exe";
                     }
-                    var updaterFile = Path.Combine(Path.GetDirectoryName(Assembly.GetEntryAssembly().Location),
-                        "TempUpdate", "updater", $"Ombi.Updater{updaterExtension}");
+                    var updaterFile = Path.Combine(tempPath, "updater", $"Ombi.Updater{updaterExtension}");
+                    if (!File.Exists(updaterFile))
+                    {
+                        throw new FileNotFoundException(
+                            "The Reqestra release does not contain the packaged updater executable.",
+                            updaterFile);
+                    }
 
-                    // Make sure the file is an executable
-                    //ExecLinuxCommand($"chmod +x {updaterFile}");
-
+                    if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                    {
+                        File.SetUnixFileMode(updaterFile,
+                            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                            UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                            UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+                    }
 
                     // There must be an update
                     var start = new ProcessStartInfo
@@ -262,7 +248,7 @@ namespace Ombi.Schedule.Jobs.Ombi
                         CreateNoWindow = true, // Ignored if UseShellExecute is set to true
                         FileName = updaterFile,
                         Arguments = GetArgs(settings),
-                        WorkingDirectory = Path.Combine(Path.GetDirectoryName(Assembly.GetEntryAssembly().Location), "TempUpdate"),
+                        WorkingDirectory = tempPath,
                     };
                     //if (settings.Username.HasValue())
                     //{
@@ -296,12 +282,43 @@ namespace Ombi.Schedule.Jobs.Ombi
             }
         }
 
+        private static string GetReleaseAssetName(Architecture architecture)
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                return architecture switch
+                {
+                    Architecture.X64 => "win-x64.zip",
+                    Architecture.X86 => "win-x86.zip",
+                    _ => null,
+                };
+            }
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                return architecture == Architecture.X64 ? "osx-x64.tar.gz" : null;
+            }
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            {
+                return architecture switch
+                {
+                    Architecture.X64 => "linux-x64.tar.gz",
+                    Architecture.Arm => "linux-arm.tar.gz",
+                    Architecture.Arm64 => "linux-arm64.tar.gz",
+                    _ => null,
+                };
+            }
+
+            return null;
+        }
+
         private string GetArgs(UpdateSettings settings)
         {
             var url = _appConfig.Get(ConfigurationTypes.Url);
             var storage = _appConfig.Get(ConfigurationTypes.StoragePath);
 
-            var currentLocation = Path.GetDirectoryName(Assembly.GetEntryAssembly().Location);
+            var currentLocation = Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory);
             var processName = (settings.ProcessName.HasValue() ? settings.ProcessName : "Ombi");
 
             var sb = new StringBuilder();

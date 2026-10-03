@@ -106,10 +106,13 @@ namespace Ombi.Updater
 
         private void MoveFiles(StartupOptions options)
         {
-            var location = System.Reflection.Assembly.GetEntryAssembly().Location;
-            location = Path.GetDirectoryName(location);
+            // Assembly.Location is empty for a bundled single-file executable. The updater is
+            // published as a self-contained single file, so use its process base directory to
+            // locate the parent TempUpdate directory containing the extracted release.
+            var location = Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory);
             _log.LogDebug("We are currently in dir {0}", location);
-            var updatedLocation = Directory.GetParent(location).FullName;
+            var updatedLocation = Directory.GetParent(location)?.FullName
+                ?? throw new InvalidOperationException($"Unable to resolve update directory from '{location}'.");
             _log.LogDebug("The files are in {0}", updatedLocation); // Since the updater is a folder deeper
             _log.LogDebug("Ombi is installed at {0}", options.ApplicationPath);
 
