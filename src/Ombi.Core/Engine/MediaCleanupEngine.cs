@@ -15,6 +15,7 @@ using Ombi.Core.Authentication;
 using Ombi.Core.Engine.Interfaces;
 using Ombi.Core.Helpers;
 using Ombi.Core.Models.MediaCleanup;
+using Ombi.Core.Services;
 using Ombi.Core.Settings;
 using Ombi.Core.Settings.Models.External;
 using Ombi.Helpers;
@@ -85,6 +86,7 @@ namespace Ombi.Core.Engine
         private readonly IExternalRepository<SonarrCache> _sonarrCache;
         private readonly IExternalRepository<SonarrEpisodeCache> _sonarrEpisodeCache;
         private readonly IMediaCacheService _mediaCache;
+        private readonly IBackgroundNotificationQueue _backgroundNotificationQueue;
         private readonly IServiceScopeFactory _serviceScopeFactory;
         private readonly ILogger<MediaCleanupEngine> _logger;
 
@@ -107,6 +109,7 @@ namespace Ombi.Core.Engine
             IExternalRepository<SonarrCache> sonarrCache,
             IExternalRepository<SonarrEpisodeCache> sonarrEpisodeCache,
             IMediaCacheService mediaCache,
+            IBackgroundNotificationQueue backgroundNotificationQueue,
             IServiceScopeFactory serviceScopeFactory,
             ILogger<MediaCleanupEngine> logger)
         {
@@ -128,6 +131,7 @@ namespace Ombi.Core.Engine
             _sonarrCache = sonarrCache;
             _sonarrEpisodeCache = sonarrEpisodeCache;
             _mediaCache = mediaCache;
+            _backgroundNotificationQueue = backgroundNotificationQueue;
             _serviceScopeFactory = serviceScopeFactory;
             _logger = logger;
         }
@@ -1394,9 +1398,9 @@ namespace Ombi.Core.Engine
                 return;
             }
 
-            // Approval email is a secondary notification. Do not hold the user's cleanup
-            // HTTP request open while SMTP connects/sends. Use a fresh DI scope so the
-            // background work never touches request-scoped services after they are disposed.
+            // Approval email is secondary work, so do not hold the caller or the Media Cleanup
+            // state lock while SMTP connects/sends. Hand it to the application-owned background
+            // notification worker instead of creating an untracked Task.Run.
             var cleanupId = record.Id;
             var title = record.Title;
             var requestedByUserId = record.RequestedByUserId;
@@ -1404,14 +1408,13 @@ namespace Ombi.Core.Engine
             var requestType = record.RequestType;
             var scopeLabel = BuildCleanupScopeLabel(record);
 
-            _ = Task.Run(async () =>
-            {
-                try
+            var queued = _backgroundNotificationQueue.TryQueue(
+                $"Media Cleanup approval notification for '{title}' ({cleanupId})",
+                async serviceProvider =>
                 {
-                    using var scope = _serviceScopeFactory.CreateScope();
-                    var emailSettingsService = scope.ServiceProvider.GetRequiredService<ISettingsService<EmailNotificationSettings>>();
-                    var userManager = scope.ServiceProvider.GetRequiredService<OmbiUserManager>();
-                    var emailProvider = scope.ServiceProvider.GetRequiredService<IEmailProvider>();
+                    var emailSettingsService = serviceProvider.GetRequiredService<ISettingsService<EmailNotificationSettings>>();
+                    var userManager = serviceProvider.GetRequiredService<OmbiUserManager>();
+                    var emailProvider = serviceProvider.GetRequiredService<IEmailProvider>();
 
                     var emailSettings = await emailSettingsService.GetSettingsAsync();
                     if (emailSettings == null || !emailSettings.Enabled)
@@ -1460,13 +1463,15 @@ namespace Ombi.Core.Engine
                             }
                         }, emailSettings);
                     }
-                }
-                catch (Exception ex)
-                {
-                    // Approval workflow must not fail merely because SMTP is unavailable.
-                    _logger.LogWarning(ex, "Could not send Media Cleanup approval notification for {Title} ({CleanupId})", title, cleanupId);
-                }
-            });
+                });
+
+            if (!queued)
+            {
+                _logger.LogWarning(
+                    "Could not queue Media Cleanup approval notification for {Title} ({CleanupId}) because the background notification worker is stopping",
+                    title,
+                    cleanupId);
+            }
         }
 
         private async Task ExecuteDeletion(MediaCleanupRecord record, MediaCleanupSettings settings, MediaCleanupState state)

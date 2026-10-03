@@ -235,6 +235,8 @@ namespace Ombi.DependencyInjection
             services.AddTransient<INotificationService, NotificationService>();
             services.AddTransient<IEmailProvider, GenericEmailProvider>();
             services.AddTransient<INotificationHelper, NotificationHelper>();
+            services.AddSingleton<IBackgroundNotificationQueue, BackgroundNotificationQueue>();
+            services.AddHostedService<BackgroundNotificationHostedService>();
             services.AddSingleton<ICacheService, CacheService>();
             services.AddSingleton<IMediaCacheService, MediaCacheService>();
             services.AddScoped<IImageService, ImageService>();
