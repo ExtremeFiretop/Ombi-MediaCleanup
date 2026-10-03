@@ -4,6 +4,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
@@ -17,6 +18,7 @@ using Ombi.Settings.Settings.Models;
 using Ombi.Store.Entities;
 using Ombi.Store.Repository;
 using Ombi.Updater;
+using Octokit;
 using Quartz;
 using SharpCompress.Common;
 using SharpCompress.Readers;
@@ -89,6 +91,29 @@ namespace Ombi.Schedule.Jobs.Ombi
             return Version.TryParse(normalized, out version);
         }
 
+        private static bool IsTransientUpdateCheckException(Exception exception)
+        {
+            if (exception is HttpRequestException || exception is TaskCanceledException)
+            {
+                return true;
+            }
+
+            // Octokit converts temporary GitHub HTTP responses into ApiException rather than
+            // HttpRequestException. Treat rate limiting, request timeouts and server-side
+            // failures as retryable for the scheduled update check.
+            if (exception is ApiException apiException)
+            {
+                var statusCode = (int)apiException.StatusCode;
+                return statusCode == 403 ||
+                       statusCode == 408 ||
+                       statusCode == 429 ||
+                       (statusCode >= 500 && statusCode <= 599);
+            }
+
+            return exception.InnerException != null &&
+                   IsTransientUpdateCheckException(exception.InnerException);
+        }
+
         public async Task Execute(IJobExecutionContext job)
         {
             Logger.LogDebug(LoggingEvents.Updater, "Starting Update job");
@@ -119,7 +144,23 @@ namespace Ombi.Schedule.Jobs.Ombi
                 // branch is already handled by ChangeLogProcessor, so no branch
                 // token is needed here.
                 Logger.LogDebug(LoggingEvents.Updater, "Looking for updates now");
-                var updates = await Processor.Process();
+                UpdateModel updates;
+                try
+                {
+                    updates = await Processor.Process();
+                }
+                catch (Exception e) when (IsTransientUpdateCheckException(e))
+                {
+                    // A scheduled update check should not fail the Quartz job just because
+                    // GitHub, DNS or the local network is temporarily unavailable. Log one
+                    // concise warning and let the next scheduled run try again.
+                    Logger.LogWarning(LoggingEvents.Updater,
+                        "Reqestra could not reach GitHub while checking for updates: {0}. " +
+                        "The updater will retry at the next scheduled check.",
+                        e.Message);
+                    Logger.LogDebug(e, "Transient Reqestra update-check failure");
+                    return;
+                }
                 Logger.LogDebug(LoggingEvents.Updater, "Updates: {0}", updates);
 
 
