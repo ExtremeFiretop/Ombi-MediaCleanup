@@ -1,3 +1,14 @@
+## [4.61.7](https://github.com/ExtremeFiretop/Reqestra/compare/v4.61.6...v4.61.7) (2026-10-03)
+
+
+### Bug Fixes
+
+* **ci:** make release versioning tag-driven ([6cc5800](https://github.com/ExtremeFiretop/Reqestra/commit/6cc580080d84d3f440db028ba69e392ec40f82f8))
+* **notifications:** bound queue and retry transient failures ([35236e3](https://github.com/ExtremeFiretop/Reqestra/commit/35236e36d9997ae315bdeb50b4cb3e634858239b))
+* **notifications:** replace fire-and-forget cleanup emails ([244574d](https://github.com/ExtremeFiretop/Reqestra/commit/244574d0e49b1f15d4f83a4061fc49e49439d5f8))
+
+
+
 ## [4.61.6](https://github.com/ExtremeFiretop/Reqestra/compare/v4.61.5...v4.61.6) (2026-10-03)
 
 
