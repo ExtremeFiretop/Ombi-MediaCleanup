@@ -1,3 +1,12 @@
+## [4.61.6](https://github.com/ExtremeFiretop/Reqestra/compare/v4.61.5...v4.61.6) (2026-10-03)
+
+
+### Bug Fixes
+
+* **updater:** align Microsoft.Extensions dependencies with .NET 8 ([3f99665](https://github.com/ExtremeFiretop/Reqestra/commit/3f9966597ccb4066f3af348dd8c8a07fe5fe5bb8))
+
+
+
 ## [4.61.5](https://github.com/ExtremeFiretop/Reqestra/compare/v4.61.4...v4.61.5) (2026-10-03)
 
 
