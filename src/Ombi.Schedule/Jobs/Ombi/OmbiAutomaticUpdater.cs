@@ -360,25 +360,41 @@ namespace Ombi.Schedule.Jobs.Ombi
             var storage = _appConfig.Get(ConfigurationTypes.StoragePath);
 
             var currentLocation = Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory);
-            var processName = (settings.ProcessName.HasValue() ? settings.ProcessName : "Ombi");
+            var processName = settings.ProcessName.HasValue() ? settings.ProcessName : "Ombi";
+            var processId = _processProvider.GetCurrentProcessId();
 
             var sb = new StringBuilder();
-            sb.Append($"--applicationPath \"{currentLocation}\" --processname \"{processName}\" ");
-            //if (settings.WindowsService)
-            //{
-            //    sb.Append($"--windowsServiceName \"{settings.WindowsServiceName}\" ");
-            //}
-            var sb2 = new StringBuilder();
+            sb.Append($"--applicationPath \"{currentLocation}\" --processname \"{processName}\" --processId {processId} ");
+
+            if (settings.WindowsService)
+            {
+                if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                {
+                    throw new InvalidOperationException("Windows service update mode can only be used on Windows.");
+                }
+
+                if (!settings.WindowsServiceName.HasValue())
+                {
+                    throw new InvalidOperationException(
+                        "Windows service update mode is enabled but no Windows service name is configured.");
+                }
+
+                sb.Append($"--windowsServiceName \"{settings.WindowsServiceName}\" ");
+            }
+
+            // Preserve the arguments used by non-service installations when the updater
+            // restarts Reqestra. The old implementation built these arguments in a second
+            // StringBuilder that was never returned.
             if (url?.Value.HasValue() ?? false)
             {
-                sb2.Append($" --host {url.Value}");
+                sb.Append($"--host \"{url.Value}\" ");
             }
             if (storage?.Value.HasValue() ?? false)
             {
-                sb2.Append($" --storage {storage.Value}");
+                sb.Append($"--storage \"{storage.Value}\" ");
             }
 
-            return sb.ToString();
+            return sb.ToString().Trim();
         }
 
         private void RunScript(UpdateSettings settings, string downloadUrl)

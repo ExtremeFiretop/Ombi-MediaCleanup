@@ -14,29 +14,30 @@ namespace Ombi.Updater
         private const int MaxRetries = 3;
         private const int RetryDelayMs = 1000;
 
-        public Installer(ILogger<Installer> log)
+        public Installer(ILogger<Installer> log, IProcessProvider processProvider)
         {
             _log = log;
+            _processProvider = processProvider;
         }
 
         private readonly ILogger<Installer> _log;
+        private readonly IProcessProvider _processProvider;
 
         public void Start(StartupOptions opt)
         {
-            var p = new ProcessProvider();
-            bool killed = false;
+            bool stopped = false;
             try
             {
-                killed = p.Kill(opt);
+                stopped = _processProvider.Kill(opt);
             }
             catch (Exception e)
             {
-                _log.LogError(e, "Error killing Ombi process");
+                _log.LogError(e, "Error stopping Reqestra process/service");
             }
 
-            if (!killed)
+            if (!stopped)
             {
-                _log.LogError("Couldn't kill the Ombi process, aborting update");
+                _log.LogError("Couldn't stop the Reqestra process/service, aborting update");
                 return;
             }
 
@@ -60,28 +61,23 @@ namespace Ombi.Updater
             }
             if (options.IsWindowsService)
             {
-                var startInfo =
-                    new ProcessStartInfo
-                    {
-                        WindowStyle = ProcessWindowStyle.Hidden,
-                        FileName = "cmd.exe",
-                        Arguments = $"/C net start \"{options.WindowsServiceName}\""
-                    };
-
-                using (var process = new Process { StartInfo = startInfo })
+                if (!_processProvider.StartService(options.WindowsServiceName))
                 {
-                    process.Start();
+                    _log.LogError(
+                        "Reqestra files were updated, but Windows service {ServiceName} could not be restarted",
+                        options.WindowsServiceName);
+                    return;
                 }
             }
             else
             {
                 if (!string.IsNullOrEmpty(options.Host))
                 {
-                    startupArgsBuilder.Append($"--host {options.Host} ");
+                    startupArgsBuilder.Append($"--host \"{options.Host}\" ");
                 }
                 if (!string.IsNullOrEmpty(options.Storage))
                 {
-                    startupArgsBuilder.Append($"--storage {options.Storage}");
+                    startupArgsBuilder.Append($"--storage \"{options.Storage}\"");
                 }
 
                 var start = new ProcessStartInfo
