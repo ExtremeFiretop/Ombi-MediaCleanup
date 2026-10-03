@@ -1463,12 +1463,13 @@ namespace Ombi.Core.Engine
                             }
                         }, emailSettings);
                     }
-                });
+                },
+                EmailRetryPolicy.IsTransient);
 
             if (!queued)
             {
                 _logger.LogWarning(
-                    "Could not queue Media Cleanup approval notification for {Title} ({CleanupId}) because the background notification worker is stopping",
+                    "Could not queue Media Cleanup approval notification for {Title} ({CleanupId}) because the background notification queue is full or the worker is stopping",
                     title,
                     cleanupId);
             }
