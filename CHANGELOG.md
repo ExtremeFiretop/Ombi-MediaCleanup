@@ -1,3 +1,12 @@
+## [4.61.4](https://github.com/ExtremeFiretop/Reqestra/compare/v4.61.3...v4.61.4) (2026-10-02)
+
+
+### Bug Fixes
+
+* **ci:** harden multi-arch frontend Docker build ([3824f35](https://github.com/ExtremeFiretop/Reqestra/commit/3824f35d0c2a5bf5dbf61b85560bc3a0752783d4))
+
+
+
 ## [4.61.3](https://github.com/ExtremeFiretop/Reqestra/compare/v4.61.2...v4.61.3) (2026-10-02)
 
 
