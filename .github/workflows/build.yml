@@ -60,17 +60,75 @@ jobs:
   versioning:
      runs-on: ubuntu-latest
      needs: [ build-ui, unit-test ]
+     permissions:
+      contents: write
      outputs:
       changelog: ${{ steps.changelog.outputs.clean_changelog }}
       tag: ${{ steps.changelog.outputs.tag }}
       version: ${{ steps.changelog.outputs.version }}
      steps:
-       - uses: actions/checkout@v2
+       - uses: actions/checkout@v4
+         with:
+          fetch-depth: 0
+
+       - name: Verify release tag baseline
+         shell: bash
+         run: |
+           set -euo pipefail
+           git fetch --force --tags origin
+
+           file_version="$(python3 -c 'import json; print(json.load(open("version.json", encoding="utf-8"))["version"])')"
+           latest_tag="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)"
+
+           echo "version.json: $file_version"
+           if [[ -z "$latest_tag" ]]; then
+             echo "No existing semantic release tag found; the changelog action will use its fallback version."
+             exit 0
+           fi
+
+           tag_version="${latest_tag#v}"
+           echo "Latest semantic release tag: $latest_tag"
+
+           python3 - "$file_version" "$tag_version" <<'PY'
+           import re
+           import sys
+
+           pattern = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+
+           def parse(value):
+               match = pattern.fullmatch(value)
+               if not match:
+                   raise SystemExit(f"Invalid release version: {value}")
+               return tuple(int(part) for part in match.groups())
+
+           file_version, tag_version = sys.argv[1], sys.argv[2]
+           file_semver, tag_semver = parse(file_version), parse(tag_version)
+
+           if file_semver > tag_semver:
+               print(
+                   f"::error::version.json ({file_version}) is ahead of the latest release tag "
+                   f"(v{tag_version}). Git tags are the release source of truth; refusing to "
+                   "silently move the tracked version backward."
+               )
+               raise SystemExit(1)
+
+           if file_semver < tag_semver:
+               print(
+                   f"::warning::version.json ({file_version}) is behind the latest release tag "
+                   f"(v{tag_version}). The release will be calculated from Git tags and "
+                   "version.json will be repaired in the release commit."
+               )
+           else:
+               print("Release tag and version.json are aligned.")
+           PY
+
        - name: Conventional Changelog Action
          id: changelog
          uses: TriPSs/conventional-changelog-action@v3
          with:
           version-file: 'version.json'
+          skip-version-file: 'true'
+          pre-commit: '.github/scripts/release-precommit.js'
           release-count: 40
           skip-on-empty: 'false'
           git-message: 'chore(release): :rocket: {version}'
