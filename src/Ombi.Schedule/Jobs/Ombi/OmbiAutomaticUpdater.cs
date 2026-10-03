@@ -18,7 +18,7 @@ using Ombi.Settings.Settings.Models;
 using Ombi.Store.Entities;
 using Ombi.Store.Repository;
 using Ombi.Updater;
-using Octokit;
+using OctokitApiException = Octokit.ApiException;
 using Quartz;
 using SharpCompress.Common;
 using SharpCompress.Readers;
@@ -101,7 +101,7 @@ namespace Ombi.Schedule.Jobs.Ombi
             // Octokit converts temporary GitHub HTTP responses into ApiException rather than
             // HttpRequestException. Treat rate limiting, request timeouts and server-side
             // failures as retryable for the scheduled update check.
-            if (exception is ApiException apiException)
+            if (exception is OctokitApiException apiException)
             {
                 var statusCode = (int)apiException.StatusCode;
                 return statusCode == 403 ||
